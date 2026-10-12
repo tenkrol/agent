@@ -33,7 +33,7 @@ const DEFAULTS = {
   TASK_TOKEN_WARN: '300000',
   // Предел шагов на задачу: расход ≈ шаги × контекст.
   TASK_MAX_STEPS: '16',
-  DAILY_TOKEN_LIMIT: '2000000',
+  DAILY_TOKEN_LIMIT: '3000000',
   MAX_TASK_CHARS: '8000',
   MAX_ANSWER_CHARS: '20000',
   MAX_ATTACHMENT_BYTES: '20000000',
@@ -101,6 +101,15 @@ const DEFAULTS = {
   ROUTER_MODEL: '',
   ROUTER_MAX_TOKENS: '700',
   ROUTER_TIMEOUT_MS: '60000',
+
+  // Этап 1: алерты. auto — включить сами, когда этап 0 наберёт базовую линию.
+  ALERTS_MODE: 'auto',
+  ALERT_DEDUP_MIN: '60',
+  ALERT_QUIET_HOURS: '23:00-07:30',
+  ALERT_EMERGENCY_DISK_MB: '300',
+  ALERT_WARN_DISK_MB: '1024',
+  ALERT_ERRORS_PER_INTERVAL: '20',
+  DIGEST_AT: '08:00',
 
   // Yandex.Disk: the archive of everything the agent produces.
   YANDEX_DISK: 'false',
@@ -204,6 +213,17 @@ function nonNegativeNumber(raw, key, { max = 1_000_000 } = {}) {
     throw new ConfigError(`${key}: нужно число от 0 до ${max}, ${described(raw)}`)
   }
   return value
+}
+
+/** «ЧЧ:ММ» в минуты от полуночи; «off» или пусто — выключено. */
+function clockMinutes(raw, key) {
+  const value = String(raw ?? '').trim().toLowerCase()
+  if (value === '' || value === 'off') return undefined
+  const match = value.match(/^(\d{1,2}):(\d{2})$/)
+  if (!match) throw new ConfigError(`${key}: нужно время вида ЧЧ:ММ или off`)
+  const minutes = Number(match[1]) * 60 + Number(match[2])
+  if (minutes > 1439) throw new ConfigError(`${key}: время вне суток`)
+  return minutes
 }
 
 /** A choice from a closed set, reported without echoing the value. */
@@ -410,9 +430,20 @@ export function loadConfig(env = process.env) {
       // An empty value means "the same zone as the daily budget".
       timeZone: String(env.SCHEDULE_TIME_ZONE ?? '').trim() || String(env.TIME_ZONE ?? '').trim(),
     },
+    // Один блок на все алерты: и «дорого по лимиту» (обработчик лимитов),
+    // и автономные триггеры этапа 1. Двух одноимённых ключей быть не должно —
+    // в JS побеждает последний, и автономные настройки молча терялись.
     alerts: {
       chatId: String(env.ALERT_CHAT_ID ?? '').trim(),
       limitPercent: positiveInt(read(env, 'ALERT_ON_LIMIT_PERCENT'), 'ALERT_ON_LIMIT_PERCENT', { min: 1, max: 100 }),
+      mode: choice(read(env, 'ALERTS_MODE'), 'ALERTS_MODE', ['dry', 'auto', 'armed'], 'auto'),
+      dedupMinutes: positiveInt(read(env, 'ALERT_DEDUP_MIN'), 'ALERT_DEDUP_MIN', { min: 1, max: 10_080 }),
+      quietHours: String(read(env, 'ALERT_QUIET_HOURS')).trim(),
+      emergencyDiskMb: positiveInt(read(env, 'ALERT_EMERGENCY_DISK_MB'), 'ALERT_EMERGENCY_DISK_MB', { min: 10, max: 1_000_000 }),
+      warnDiskMb: positiveInt(read(env, 'ALERT_WARN_DISK_MB'), 'ALERT_WARN_DISK_MB', { min: 10, max: 1_000_000 }),
+      errorsPerInterval: positiveInt(read(env, 'ALERT_ERRORS_PER_INTERVAL'), 'ALERT_ERRORS_PER_INTERVAL', { min: 1, max: 100_000 }),
+      // Время дневной сводки в минутах от полуночи; off — не отправлять.
+      digestAt: clockMinutes(read(env, 'DIGEST_AT'), 'DIGEST_AT'),
     },
     pricing: {
       prices: {

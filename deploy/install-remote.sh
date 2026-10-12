@@ -179,11 +179,20 @@ install -m 0644 "$RELEASE_DIR/deploy/agent-metrics.service" /etc/systemd/system/
 install -m 0644 "$RELEASE_DIR/deploy/agent-metrics.timer" /etc/systemd/system/agent-metrics.timer
 sed -i "s|^ExecStart=.*|ExecStart=/etc/agent/metrics-collect.sh|" /etc/systemd/system/agent-metrics.service
 
+# Этап 1: алерты (только логика и Telegram, модель не участвует).
+install -m 0644 "$RELEASE_DIR/deploy/agent-alerts.service" /etc/systemd/system/agent-alerts.service
+install -m 0644 "$RELEASE_DIR/deploy/agent-alerts.timer" /etc/systemd/system/agent-alerts.timer
+NODE_BIN=$(command -v node || echo /usr/bin/node)
+sed -i "s|^ExecStart=.*|ExecStart=$NODE_BIN /opt/agent/src/alerts-cli.mjs|" /etc/systemd/system/agent-alerts.service
+
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null
 systemctl enable --now agent-backup.timer >/dev/null 2>&1 || true
 systemctl enable --now agent-metrics.timer >/dev/null 2>&1 || true
 systemctl start agent-metrics.service >/dev/null 2>&1 || true
+systemctl enable agent-alerts.timer >/dev/null 2>&1 || true
+systemctl start agent-alerts.timer >/dev/null 2>&1 || true
+systemctl start agent-alerts.service >/dev/null 2>&1 || true
 
 log "6/7 перезапуск"
 systemctl restart "$SERVICE_NAME"
@@ -192,6 +201,7 @@ sleep 2
 log "7/7 состояние"
 printf 'Активен: %s\n' "$(systemctl is-active "$SERVICE_NAME" || true)"
 printf 'Бэкап: %s\n' "$(systemctl list-timers agent-backup.timer --no-pager 2>/dev/null | sed -n 2p | sed 's/  */ /g' || true)"
+printf 'Алерты: %s\n' "$(systemctl list-timers agent-alerts.timer --no-pager 2>/dev/null | sed -n 2p | sed 's/  */ /g' || true)"
 printf 'Метрики: %s\n' "$(systemctl list-timers agent-metrics.timer --no-pager 2>/dev/null | sed -n 2p | sed 's/  */ /g' || true)"
 printf 'Последний замер: %s\n' "$(tail -1 /var/lib/agent/state/observations.jsonl 2>/dev/null | cut -c1-160 || echo 'ещё нет')"
 journalctl -u "$SERVICE_NAME" -n 25 --no-pager || true

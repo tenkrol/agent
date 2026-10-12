@@ -1,0 +1,20 @@
+# Этап 1: оценка триггеров и отправка алертов. Модель не используется —
+# решение принимает чистая функция, поэтому пробуждение стоит ноль токенов.
+[Unit]
+Description=Evaluate agent alert triggers (stage 1)
+After=network-online.target agent-metrics.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agent
+Group=agent
+# Токен бота и чат владельца: файл читает менеджер (root) и передаёт сервису.
+EnvironmentFile=/etc/agent/agent.env
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/agent
+# Путь к node установщик подставит сам (sed по этой строке).
+ExecStart=/usr/bin/node /opt/agent/src/alerts-cli.mjs

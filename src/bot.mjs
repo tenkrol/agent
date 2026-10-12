@@ -27,7 +27,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { saveAttachments } from './inbox.mjs'
 import { MEMORY_FILE } from './memory.mjs'
-import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, renderReport } from './observe.mjs'
+import { AlertState } from './alerts.mjs'
+import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, readiness, renderReport } from './observe.mjs'
 import { formatDiskSize, joinPath } from './yandex-disk.mjs'
 import { buildTaskPrompt, describeAttachmentIssues } from './prompt.mjs'
 import { costOf, costOfDay, formatUsd } from './pricing.mjs'
@@ -90,6 +91,9 @@ const COMMANDS = [
   ['/memory', 'что агент запомнил о вас; /memory — список, /forget <номер> — убрать'],
   ['/disk', 'Яндекс.Диск: /disk — состояние и файлы, /disk get <путь>, /disk link <путь>'],
   ['/observe', 'этап 0: что видит наблюдатель, базовая линия и черновик порогов'],
+  ['/alerts', 'этап 1: состояние автономии, дедуп и счётчики алертов'],
+  ['/stop', 'остановить автономию: остаются только аварийные алерты'],
+  ['/resume', 'снять остановку автономии'],
   ['/remember', 'добавить факт в память: /remember текст'],
   ['/schedule', 'расписания: /schedule add "0 9 * * 1-5" задача'],
   ['/files', 'последние файлы в рабочей папке'],
@@ -537,6 +541,15 @@ export class AgentBot {
       case '/observe':
         await this.safeSend(chatId, await this.observeText(args))
         return
+      case '/stop':
+        await this.safeSend(chatId, await this.stopAlerts())
+        return
+      case '/resume':
+        await this.safeSend(chatId, await this.resumeAlerts())
+        return
+      case '/alerts':
+        await this.safeSend(chatId, await this.alertsText())
+        return
       case '/memory':
         await this.safeSend(chatId, await this.memoryText())
         return
@@ -865,6 +878,58 @@ export class AgentBot {
       lines.push('', 'Папка пока пуста: файлы появятся здесь после первой задачи с результатом.')
     }
     lines.push('', 'Скачать в работу: /disk get <путь>. Сделать ссылку: /disk link <путь>.')
+    return lines.join('\n')
+  }
+
+  /** Состояние алертов: читаем с диска каждый раз — его пишет таймер. */
+  async alertState() {
+    return new AlertState({
+      file: path.join(this.config.workspace.stateDir, 'alerts.json'),
+      logger: this.logger,
+    }).load()
+  }
+
+  /** `/stop` — постоянный режим «только алерты» (переживает перезапуск). */
+  async stopAlerts() {
+    const state = await this.alertState()
+    await state.setStopped(true)
+    return [
+      '⏸ Автономия остановлена: предупреждения молчат, приходят только аварийные (сервис лежит, диск кончился).',
+      'Снять — /resume. Задачи при этом работают как обычно.',
+    ].join('\n')
+  }
+
+  /** `/resume` — вернуть предупреждения. */
+  async resumeAlerts() {
+    const state = await this.alertState()
+    await state.setStopped(false)
+    return '▶️ Автономия снова с предупреждениями: обычные алерты вернутся.'
+  }
+
+  /** `/alerts` — что происходит с автономией и сколько она уже сработала. */
+  async alertsText() {
+    const state = await this.alertState()
+    const file = path.join(this.config.workspace.stateDir, OBSERVATIONS_FILE)
+    const samples = await loadObservations(file)
+    const ready = readiness(samples)
+    const mode = this.config.alerts.mode
+    const armed = mode === 'armed' || (mode === 'auto' && ready.ready)
+    const counters = state.data.counters ?? {}
+    const lines = [
+      '🔔 Автономия (этап 1)',
+      `Режим: ${mode}${armed ? ' — алерты включены' : ' — сухой прогон, ждём базовую линию'}`,
+      `Остановка: ${state.stopped ? 'включена (/resume снимет)' : 'нет'}`,
+      `Наблюдений: ${samples.length}, покрытие ${Math.round(ready.coverage * 100)}% (нужно ${ready.requiredDays} суток)`,
+      `Отправлено алертов: ${counters.sent ?? 0}, подавлено дедупом: ${counters.dedup ?? 0}`,
+      `Отложено в тихие часы: ${state.data.quiet.length}`,
+      '',
+      'Пороги: диск < ' + this.config.alerts.emergencyDiskMb + ' МБ (авария), < ' + this.config.alerts.warnDiskMb + ' МБ (предупреждение); '
+        + 'статистические — после базовой линии. Тихие часы: ' + (this.config.alerts.quietHours || 'выключены') + '.',
+    ]
+    if (state.data.quiet.length > 0) {
+      lines.push('', 'Отложенное:')
+      for (const item of state.data.quiet.slice(-5)) lines.push(`• ${item.title}: ${item.detail}`)
+    }
     return lines.join('\n')
   }
 

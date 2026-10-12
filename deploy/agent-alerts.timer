@@ -1,0 +1,13 @@
+# Каждые 5 минут, сразу после сбора метрик. Стоимость — ноль токенов.
+[Unit]
+Description=Check agent alerts every 5 minutes (stage 1)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=agent-alerts.service
+
+[Install]
+WantedBy=timers.target

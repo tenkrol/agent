@@ -10,7 +10,7 @@ const base = {
 test('defaults match the agreed server limits', () => {
   const config = loadConfig(base)
   assert.equal(config.limits.taskTimeoutMs, 20 * 60 * 1000)
-  assert.equal(config.limits.dailyTokenLimit, 2_000_000)
+  assert.equal(config.limits.dailyTokenLimit, 3_000_000, 'лимит поднят до 3 млн по решению владельца')
   assert.equal(config.dsh.bin, '/usr/local/bin/dsh')
   assert.equal(config.dsh.home, '/var/lib/agent/dsh')
   assert.equal(config.workspace.dir, '/var/lib/agent/workspace')

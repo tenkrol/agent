@@ -163,9 +163,10 @@ test('another user gets the refusal and no task is started', async () => {
 })
 
 test('the daily budget stops new tasks before anything is spent', async () => {
-  const env = await makeBot()
+  // Лимит задаём явно: тест проверяет механизм, а не величину по умолчанию.
+  const env = await makeBot({ configEnv: { DAILY_TOKEN_LIMIT: '1000' } })
   try {
-    env.usage.record({ usage: { prompt_tokens: 2_000_000, completion_tokens: 1 }, userId: '42', chatId: 42 })
+    env.usage.record({ usage: { prompt_tokens: 1_500, completion_tokens: 1 }, userId: '42', chatId: 42 })
     let runs = 0
     env.bot.runner = { async run() { runs += 1; return okResult() } }
     await env.bot.handleUpdate(message({ text: 'ещё задача' }))
