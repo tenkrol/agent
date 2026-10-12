@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# Сообщение от агента в чат владельца — через точку приёма бота.
+#
+# Агент работает на этой машине, а бот живёт на другой; туннель
+# (tg-outbox-tunnel.service) отдаёт его приём на локальный порт 8788.
+# Токен лежит в /etc/tg-agent/outbox-token, права 600.
+#
+#   agent-notify "Задача готова: отчёт в файле"
+#   echo "текст" | agent-notify
+#   agent-notify --title "Конспект" "Коротко: ..."     # заголовок для журнала
+#
+# Ненулевой код возврата означает, что сообщение НЕ доставлено: агент должен
+# сказать об этом, а не считать задачу отчитавшейся.
+set -euo pipefail
+
+TOKEN_FILE=${TOKEN_FILE:-/etc/tg-agent/outbox-token}
+ENDPOINT=${ENDPOINT:-http://127.0.0.1:8788/outbox}
+TITLE=""
+if [ "${1:-}" = "--title" ]; then TITLE=${2:-}; shift 2; fi
+TEXT=${1:-}
+if [ -z "$TEXT" ] && [ ! -t 0 ]; then TEXT=$(cat); fi
+if [ -z "${TEXT// }" ]; then
+  echo "agent-notify: пустое сообщение — нечего отправлять" >&2
+  exit 2
+fi
+# Токен берём из окружения: в песочнице агента файл /etc может быть недоступен.
+if [ -n "${OUTBOX_TOKEN:-}" ]; then
+  TOKEN=$OUTBOX_TOKEN
+else
+  [ -f "$TOKEN_FILE" ] || { echo "agent-notify: нет ни OUTBOX_TOKEN, ни $TOKEN_FILE" >&2; exit 3; }
+  TOKEN=$(cut -d= -f2- "$TOKEN_FILE")
+fi
+[ -n "$TOKEN" ] || { echo "agent-notify: пустой токен в $TOKEN_FILE" >&2; exit 3; }
+
+PAYLOAD=$(TEXT="$TEXT" TITLE="$TITLE" python3 -c "import json,os; d={\"text\":os.environ[\"TEXT\"],\"title\":os.environ[\"TITLE\"]}; print(json.dumps({k:v for k,v in d.items() if v}, ensure_ascii=False))")
+ANSWER=$(curl -sS -m 20 -X POST -H "content-type: application/json" -H "Authorization: Bearer $TOKEN" -d "$PAYLOAD" "$ENDPOINT") || {
+  echo "agent-notify: бот недоступен (туннель поднят? systemctl status tg-outbox-tunnel)" >&2; exit 4; }
+case "$ANSWER" in
+  *\"ok\":true*) echo "доставлено: $ANSWER" ;;
+  *) echo "agent-notify: бот отказал: $ANSWER" >&2; exit 5 ;;
+esac

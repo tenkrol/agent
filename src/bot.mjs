@@ -1956,7 +1956,10 @@ export class AgentBot {
   async safeSend(chatId, markdown, { keyboard, replyToMessageId } = {}) {
     if (!markdown) return undefined
     try {
-      return await this.platform.sendText({ chatId, markdown, keyboard, replyToMessageId })
+      const sent = await this.platform.sendText({ chatId, markdown, keyboard, replyToMessageId })
+      // Дублируем ответ в чат-бот: владелец ведёт диалог там, и его ответ продолжает ту же беседу.
+      void mirrorToAssistant(markdown).catch(() => {})
+      return sent
     } catch (error) {
       this.logger?.error('sendMessage failed', { chatId, error })
       return undefined
@@ -1993,3 +1996,21 @@ export function matchVariant(text, variants = []) {
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Отправить текст ответа в точку приёма чат-бота (OUTBOX_TOKEN приходит из окружения). */
+async function mirrorToAssistant(text) {
+  const token = process.env.OUTBOX_TOKEN
+  if (!token) return
+  const body = String(text ?? '').trim()
+  if (!body) return
+  try {
+    await fetch(process.env.OUTBOX_URL ?? 'http://127.0.0.1:8788/outbox', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: body.slice(0, 3500), title: 'Ответ агента' }),
+      signal: AbortSignal.timeout(15000),
+    })
+  } catch {
+    // Молчание лучше падения: ответ уже ушёл владельцу в чат агента.
+  }
+}
