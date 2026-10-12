@@ -27,6 +27,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { saveAttachments } from './inbox.mjs'
 import { MEMORY_FILE } from './memory.mjs'
+import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, renderReport } from './observe.mjs'
 import { formatDiskSize, joinPath } from './yandex-disk.mjs'
 import { buildTaskPrompt, describeAttachmentIssues } from './prompt.mjs'
 import { costOf, costOfDay, formatUsd } from './pricing.mjs'
@@ -88,6 +89,7 @@ const COMMANDS = [
   ['/usage', 'расход по дням в токенах и деньгах: /usage [дней]'],
   ['/memory', 'что агент запомнил о вас; /memory — список, /forget <номер> — убрать'],
   ['/disk', 'Яндекс.Диск: /disk — состояние и файлы, /disk get <путь>, /disk link <путь>'],
+  ['/observe', 'этап 0: что видит наблюдатель, базовая линия и черновик порогов'],
   ['/remember', 'добавить факт в память: /remember текст'],
   ['/schedule', 'расписания: /schedule add "0 9 * * 1-5" задача'],
   ['/files', 'последние файлы в рабочей папке'],
@@ -532,6 +534,9 @@ export class AgentBot {
       case '/disk':
         await this.safeSend(chatId, await this.diskText(args))
         return
+      case '/observe':
+        await this.safeSend(chatId, await this.observeText(args))
+        return
       case '/memory':
         await this.safeSend(chatId, await this.memoryText())
         return
@@ -861,6 +866,20 @@ export class AgentBot {
     }
     lines.push('', 'Скачать в работу: /disk get <путь>. Сделать ссылку: /disk link <путь>.')
     return lines.join('\n')
+  }
+
+  /**
+   * Этап 0 «Наблюдатель»: сводка по журналу метрик.
+   *
+   * Замеры снимает таймер без модели; здесь только чтение и расчёт базовой
+   * линии, поэтому команда не тратит токенов.
+   */
+  async observeText(args = '') {
+    const days = clamp(Number.parseInt(String(args).trim(), 10) || READY_DAYS, 1, 60)
+    const file = path.join(this.config.workspace.stateDir, OBSERVATIONS_FILE)
+    const samples = await loadObservations(file)
+    this.logger?.info('observations report', { samples: samples.length, days })
+    return renderReport({ samples, days, now: this.now() })
   }
 
   /** What the agent remembers about the owner. */

@@ -1,0 +1,21 @@
+# Этап 0 «Наблюдатель»: снятие метрик хоста без участия модели.
+#
+# Один запуск — одна строка в журнале наблюдений, ноль токенов. Юнит только
+# читает систему (df, /proc, systemctl is-active) и пишет в собственное
+# состояние, поэтому работает от пользователя agent и без привилегий.
+[Unit]
+Description=Host metrics collection for the agent (stage 0 observer)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=agent
+Group=agent
+Environment=STATE_DIR=/var/lib/agent/state
+Environment=OBSERVE_RETAIN_DAYS=30
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/agent
+ExecStart=/opt/agent/deploy/metrics-collect.sh

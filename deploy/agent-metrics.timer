@@ -1,0 +1,14 @@
+# Замер каждые 5 минут: за сутки 288 точек — этого достаточно для базовой линии
+# и для отлова залпового роста, при этом сбор не стоит ни одного токена.
+[Unit]
+Description=Collect host metrics every 5 minutes (stage 0)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=agent-metrics.service
+
+[Install]
+WantedBy=timers.target

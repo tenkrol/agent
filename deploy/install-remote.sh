@@ -173,9 +173,17 @@ install -m 0644 "$RELEASE_DIR/deploy/agent-backup.service" /etc/systemd/system/a
 install -m 0644 "$RELEASE_DIR/deploy/agent-backup.timer" /etc/systemd/system/agent-backup.timer
 sed -i "s|^ExecStart=.*|ExecStart=/etc/agent/agent-backup.sh|" /etc/systemd/system/agent-backup.service
 
+# Этап 0: сбор метрик хоста без модели (таймер каждые 5 минут, 0 токенов).
+install -m 0755 "$RELEASE_DIR/deploy/metrics-collect.sh" /etc/agent/metrics-collect.sh
+install -m 0644 "$RELEASE_DIR/deploy/agent-metrics.service" /etc/systemd/system/agent-metrics.service
+install -m 0644 "$RELEASE_DIR/deploy/agent-metrics.timer" /etc/systemd/system/agent-metrics.timer
+sed -i "s|^ExecStart=.*|ExecStart=/etc/agent/metrics-collect.sh|" /etc/systemd/system/agent-metrics.service
+
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null
 systemctl enable --now agent-backup.timer >/dev/null 2>&1 || true
+systemctl enable --now agent-metrics.timer >/dev/null 2>&1 || true
+systemctl start agent-metrics.service >/dev/null 2>&1 || true
 
 log "6/7 перезапуск"
 systemctl restart "$SERVICE_NAME"
@@ -184,6 +192,8 @@ sleep 2
 log "7/7 состояние"
 printf 'Активен: %s\n' "$(systemctl is-active "$SERVICE_NAME" || true)"
 printf 'Бэкап: %s\n' "$(systemctl list-timers agent-backup.timer --no-pager 2>/dev/null | sed -n 2p | sed 's/  */ /g' || true)"
+printf 'Метрики: %s\n' "$(systemctl list-timers agent-metrics.timer --no-pager 2>/dev/null | sed -n 2p | sed 's/  */ /g' || true)"
+printf 'Последний замер: %s\n' "$(tail -1 /var/lib/agent/state/observations.jsonl 2>/dev/null | cut -c1-160 || echo 'ещё нет')"
 journalctl -u "$SERVICE_NAME" -n 25 --no-pager || true
 
 printf '\nГотово. Проверьте: journalctl -u %s -f\n' "$SERVICE_NAME"
