@@ -192,6 +192,51 @@ test('session continuity: the stored session id is resumed', async () => {
   }
 })
 
+test('a session whose context grew too large is not resumed', async () => {
+  const env = await makeBot({
+    configEnv: { SESSION_MAX_TOKENS: '1000' },
+    runner: {
+      async run() {
+        return okResult({ sessionId: 'session-new', maxStepInputTokens: 250_000 })
+      },
+    },
+  })
+  try {
+    // Прошлая беседа выросла выше предела.
+    env.state.set('session:42', 'session-huge')
+    env.state.set('sessionSize:42', 250_000)
+
+    await env.bot.handleUpdate(message({ text: 'сделай отчёт по продажам' }))
+    await env.bot.worker
+
+    assert.equal(env.bot.runner.calls?.length ?? 0, 0, 'свой раннер не вызывается')
+  } finally {
+    await env.close()
+  }
+})
+
+test('a small session is still resumed, and its size is remembered', async () => {
+  const calls = []
+  const env = await makeBot({
+    runner: {
+      async run(request) {
+        calls.push(request)
+        return okResult({ sessionId: 'session-small', maxStepInputTokens: 20_000 })
+      },
+    },
+  })
+  try {
+    env.state.set('session:42', 'session-small')
+    env.state.set('sessionSize:42', 20_000)
+    await env.bot.handleUpdate(message({ text: 'продолжи отчёт' }))
+    await env.bot.worker
+    assert.equal(calls[0].sessionId, 'session-small', 'маленькая беседа продолжается')
+    assert.equal(env.state.get('sessionSize:42'), 20_000, 'размер записан для следующего раза')
+  } finally {
+    await env.close()
+  }
+})
+
 test('/new forgets the session', async () => {
   const env = await makeBot()
   try {

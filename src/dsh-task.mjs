@@ -94,6 +94,7 @@ export class DshTaskRunner {
     onEvent,
     cgroup,
     tokenBudget = 0,
+    maxSteps = 0,
   } = {}) {
     this.command = command
     this.workspaceDir = workspaceDir
@@ -110,6 +111,9 @@ export class DshTaskRunner {
     // A ceiling on one run's tokens: a model that loops keeps re-sending its
     // context, so cost grows with every step. 0 turns the guard off.
     this.tokenBudget = Number(tokenBudget) > 0 ? Number(tokenBudget) : 0
+    // And a ceiling on steps: the bill is roughly steps × context, so a task
+    // that keeps exploring is the expensive kind. 0 turns it off.
+    this.maxSteps = Number(maxSteps) > 0 ? Number(maxSteps) : 0
   }
 
   /** The child environment: inherited, plus the few variables DSH reads. */
@@ -162,6 +166,10 @@ export class DshTaskRunner {
     let aborted = Boolean(signal?.aborted)
     let killedForOverflow = false
     let budgetExceeded = false
+    let stepsExceeded = false
+    // Самый большой вход за шаг: именно он показывает, сколько контекста носит
+    // с собой задача (расход ≈ шаги × контекст).
+    let maxStepInputTokens = 0
     let spawnError
 
     // The resource group is created before the process exists, so nothing the
@@ -207,6 +215,7 @@ export class DshTaskRunner {
         if (reason === 'abort') aborted = true
         if (reason === 'overflow') killedForOverflow = true
         if (reason === 'budget') budgetExceeded = true
+        if (reason === 'steps') stepsExceeded = true
         killGroup('SIGTERM')
         killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS)
         killTimer.unref?.()
@@ -237,6 +246,23 @@ export class DshTaskRunner {
         if (event?.type === 'session' && event.sessionId) discoveredSessionId = event.sessionId
         else if (event?.type === 'status' && event.phase === 'step_end' && event.usage) {
           accumulate(usage, event.usage)
+          // One line per step: the growth curve is what explains the bill.
+          maxStepInputTokens = Math.max(
+            maxStepInputTokens,
+            (Number(event.usage.inputTokens) || 0) + (Number(event.usage.cacheReadTokens) || 0) + (Number(event.usage.cacheWriteTokens) || 0),
+          )
+          this.logger?.info('step usage', {
+            step: usage.steps,
+            input: (Number(event.usage.inputTokens) || 0) + (Number(event.usage.cacheReadTokens) || 0) + (Number(event.usage.cacheWriteTokens) || 0),
+            cached: Number(event.usage.cacheReadTokens) || 0,
+            output: Number(event.usage.outputTokens) || 0,
+            total: Number(event.usage.totalTokens) || 0,
+            runningTotal: usage.totalTokens,
+          })
+          if (this.maxSteps > 0 && usage.steps >= this.maxSteps) {
+            this.logger?.warn('task hit its step limit, stopping', { steps: usage.steps, maxSteps: this.maxSteps, totalTokens: usage.totalTokens })
+            stop('steps')
+          }
           if (this.tokenBudget > 0 && usage.totalTokens > this.tokenBudget) {
             this.logger?.warn('task over its token budget, stopping', {
               totalTokens: usage.totalTokens,
@@ -297,9 +323,11 @@ export class DshTaskRunner {
           aborted,
           stdoutOverflow: killedForOverflow,
           budgetExceeded,
+          stepsExceeded,
           text,
           sessionId: discoveredSessionId,
           usage,
+          maxStepInputTokens,
           tools,
           errors,
           turnReason,

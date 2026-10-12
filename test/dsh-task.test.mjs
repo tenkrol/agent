@@ -86,6 +86,34 @@ test('the budget is off by default and can be switched off explicitly', async ()
   }
 })
 
+test('a run that hits its step limit is stopped', async () => {
+  const dir = await tempDir()
+  try {
+    const runner = runnerFor(dir, { maxSteps: 1 })
+    const result = await runner.run({ task: 'задача, которая начала блуждать' })
+    assert.equal(result.stepsExceeded, true)
+    assert.equal(result.ok, false)
+    assert.ok(result.usage.steps >= 1)
+  } finally {
+    await cleanup(dir)
+  }
+})
+
+test('a run under its step limit is untouched, and the limit can be off', async () => {
+  const dir = await tempDir()
+  try {
+    const limited = await runnerFor(dir, { maxSteps: 16 }).run({ task: 'посчитай 2+2' })
+    assert.equal(limited.stepsExceeded, false)
+    assert.equal(limited.ok, true)
+
+    const unlimited = await runnerFor(dir, { maxSteps: 0 }).run({ task: 'посчитай 2+2' })
+    assert.equal(unlimited.stepsExceeded, false)
+    assert.equal(unlimited.ok, true)
+  } finally {
+    await cleanup(dir)
+  }
+})
+
 test('the task travels on stdin and never in argv', async () => {
   const dir = await tempDir()
   try {

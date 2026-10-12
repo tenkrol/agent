@@ -110,6 +110,7 @@ async function main() {
     apiKey: config.model.apiKey,
     timeoutMs: config.limits.taskTimeoutMs,
     tokenBudget: config.limits.taskTokenBudget,
+    maxSteps: config.limits.taskMaxSteps,
     logger,
     cgroup: cgroupLimiter,
     onEvent: (event) => bot?.onDshEvent(event),

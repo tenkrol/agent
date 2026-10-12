@@ -38,7 +38,7 @@ export const VARIANT_DIRECTIVES = {
  * @param {string} [input.variantsMode] - `auto`, `always` or `never`.
  * @returns {string} the task text, never empty.
  */
-export function buildTaskPrompt({ text = '', files = [], notes = [], memory = '', maxChars = DEFAULT_MAX_CHARS, variantsMode } = {}) {
+export function buildTaskPrompt({ text = '', files = [], notes = [], memory = '', plan = '', maxChars = DEFAULT_MAX_CHARS, variantsMode } = {}) {
   const asked = String(text ?? '').trim()
   const budget = Math.max(1000, Number(maxChars) || DEFAULT_MAX_CHARS)
   const parts = []
@@ -48,6 +48,13 @@ export function buildTaskPrompt({ text = '', files = [], notes = [], memory = ''
     : asked)
 
   if (variantsMode && VARIANT_DIRECTIVES[variantsMode]) parts.push(VARIANT_DIRECTIVES[variantsMode])
+
+  // A plan drafted for unattended work: it keeps the executor from wandering,
+  // which is what costs the most (the bill is roughly steps × context).
+  const drafted = String(plan ?? '').trim()
+  if (drafted !== '') {
+    parts.push(['', 'Задача пришла без собеседника, план для неё уже набросан — следуй ему, но не слепо:', drafted].join('\n'))
+  }
 
   // Durable facts about the owner: what was learned in earlier tasks, so it does
   // not have to be repeated. Never invented by the model, only accumulated.

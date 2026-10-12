@@ -31,6 +31,8 @@ const DEFAULTS = {
   // step) and the level at which the answer says "this one was expensive".
   TASK_TOKEN_BUDGET: '1500000',
   TASK_TOKEN_WARN: '300000',
+  // Предел шагов на задачу: расход ≈ шаги × контекст.
+  TASK_MAX_STEPS: '16',
   DAILY_TOKEN_LIMIT: '2000000',
   MAX_TASK_CHARS: '8000',
   MAX_ANSWER_CHARS: '20000',
@@ -41,6 +43,10 @@ const DEFAULTS = {
 
   // Behaviour.
   SESSION_CONTINUITY: 'true',
+  // Предел накопленного контекста беседы: выше него следующая задача начинается
+  // с чистой сессии. DSH сжимает историю слишком поздно (проверено: ранняя
+  // компакция в headless-профиле не срабатывает), поэтому режем сами.
+  SESSION_MAX_TOKENS: '60000',
   PROGRESS_INTERVAL_MS: '60000',
   POLL_TIMEOUT_SEC: '30',
   TELEGRAM_TIMEOUT_MS: '60000',
@@ -112,6 +118,9 @@ const DEFAULTS = {
   PLAN_MODE: 'auto',
   PLAN_MIN_CHARS: '200',
   PLAN_SIGNALS: '',
+  // Тихий план для задач из моста и по расписанию: утверждать его некому,
+  // но он не даёт исполнителю блуждать.
+  PLAN_UNATTENDED: 'true',
 
   // Bridge: a loopback HTTP endpoint the chat bot reaches through an SSH tunnel.
   BRIDGE_HTTP: 'true',
@@ -293,6 +302,7 @@ export function loadConfig(env = process.env) {
       // 0 turns the per-task ceiling off.
       taskTokenBudget: positiveInt(read(env, 'TASK_TOKEN_BUDGET'), 'TASK_TOKEN_BUDGET', { min: 0, max: 1_000_000_000, allowZero: true }),
       taskTokenWarn: positiveInt(read(env, 'TASK_TOKEN_WARN'), 'TASK_TOKEN_WARN', { min: 0, max: 1_000_000_000, allowZero: true }),
+      taskMaxSteps: positiveInt(read(env, 'TASK_MAX_STEPS'), 'TASK_MAX_STEPS', { min: 0, max: 500, allowZero: true }),
     },
     task: {
       cgroup: boolean(read(env, 'TASK_CGROUP'), 'TASK_CGROUP'),
@@ -318,6 +328,7 @@ export function loadConfig(env = process.env) {
     },
     plan: {
       mode: choice(read(env, 'PLAN_MODE'), 'PLAN_MODE', ['auto', 'always', 'never'], 'auto'),
+      unattended: boolean(read(env, 'PLAN_UNATTENDED'), 'PLAN_UNATTENDED'),
       minChars: positiveInt(read(env, 'PLAN_MIN_CHARS'), 'PLAN_MIN_CHARS', { min: 20, max: 10_000 }),
       signals: String(env.PLAN_SIGNALS ?? '').trim(),
     },
@@ -419,6 +430,7 @@ export function loadConfig(env = process.env) {
       timeZone: String(env.TIME_ZONE ?? '').trim(),
       logLevel: String(read(env, 'LOG_LEVEL')).trim().toLowerCase(),
       sessionContinuity: boolean(read(env, 'SESSION_CONTINUITY'), 'SESSION_CONTINUITY'),
+      sessionMaxTokens: positiveInt(read(env, 'SESSION_MAX_TOKENS'), 'SESSION_MAX_TOKENS', { min: 0, max: 10_000_000, allowZero: true }),
       progressIntervalMs: positiveInt(read(env, 'PROGRESS_INTERVAL_MS'), 'PROGRESS_INTERVAL_MS', { min: 5000, max: 600_000 }),
       shutdownGraceMs: positiveInt(read(env, 'SHUTDOWN_GRACE_MS'), 'SHUTDOWN_GRACE_MS', { min: 0, max: 120_000, allowZero: true }),
     },

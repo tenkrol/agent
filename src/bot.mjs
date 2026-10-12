@@ -895,6 +895,45 @@ export class AgentBot {
     return `🧠 Забыл: «${removed.text}» (осталось ${this.memory.size}).`
   }
 
+  /** Draft a plan for an unattended task and return it for the prompt. */
+  async maybePlanUnattended({ job }) {
+    if (!this.config.plan.unattended || !this.quick?.enabled) return ''
+    if (!(job.scheduledFrom || job.bridgeFrom)) return ''
+    if (job.planApproved || job.forceDsh) return ''
+    if (!this.planWorth(job.text)) return ''
+    const drafted = await this.quick.plan({ task: job.text, memory: this.memory?.render() ?? '' })
+    if (drafted.usage.totalTokens > 0) {
+      this.usage.record({
+        usage: toProviderUsage(drafted.usage),
+        userId: job.userId,
+        chatId: job.chatId,
+        date: this.now(),
+        timeZone: this.config.runtime.timeZone,
+      })
+    }
+    if (drafted.plan === '') {
+      this.logger?.info('unattended plan skipped', { taskId: job.id, error: drafted.error })
+      return ''
+    }
+    this.logger?.info('unattended plan drafted', {
+      taskId: job.id,
+      tokens: drafted.usage.totalTokens,
+      chars: drafted.plan.length,
+    })
+    return drafted.plan
+  }
+
+  /** Whether a task text looks big enough to be worth planning. */
+  planWorth(text) {
+    const value = String(text ?? '')
+    if (value.length >= this.config.plan.minChars) return true
+    const configured = this.config.plan.signals === ''
+      ? PLAN_SIGNALS
+      : this.config.plan.signals.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean)
+    const lower = value.toLowerCase()
+    return configured.some((signal) => lower.includes(signal))
+  }
+
   /** Whether this task deserves a plan before it runs. */
   shouldPlan(job) {
     const mode = this.config.plan.mode
@@ -904,13 +943,7 @@ export class AgentBot {
     // Nobody is around to approve a plan for scheduled or bridged work.
     if (job.scheduledFrom || job.bridgeFrom) return false
     if (mode === 'always') return true
-    const text = String(job.text ?? '')
-    if (text.length >= this.config.plan.minChars) return true
-    const configured = this.config.plan.signals === ''
-      ? PLAN_SIGNALS
-      : this.config.plan.signals.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean)
-    const lower = text.toLowerCase()
-    return configured.some((signal) => lower.includes(signal))
+    return this.planWorth(job.text)
   }
 
   /**
@@ -1391,11 +1424,17 @@ export class AgentBot {
       await this.maybeWarnLimit()
     }
     const issue = describeAttachmentIssues(intake.files, intake.notes)
+    // Drafted before the run, not shown to anyone: for a task from the bridge or
+    // a schedule there is no one to approve a plan, and a plan is exactly what
+    // keeps those runs from wandering (the expensive failure mode).
+    const silentPlan = await this.maybePlanUnattended({ job })
+
     const task = buildTaskPrompt({
       text: job.text,
       files: intake.files,
       notes: intake.notes.map((note) => `проблема: ${note}`),
       memory: this.memory?.render() ?? '',
+      plan: silentPlan,
       maxChars: this.config.workspace.maxTaskChars,
       variantsMode: job.variantsMode ?? this.config.dialogue.proposeVariants,
     })
@@ -1422,10 +1461,18 @@ export class AgentBot {
       retryOf: job.retryOf,
     })
 
+    // Размер прошлой беседы: если он вырос выше предела, продолжаем с чистой
+    // сессии. Контекст — главная статья расхода, и держать его под контролем
+    // надёжнее здесь, чем надеяться на компакцию внутри DSH.
+    const sessionSize = Number(this.state.get(`sessionSize:${job.chatId}`)) || 0
+    const sessionLimit = this.config.runtime.sessionMaxTokens
+    const sessionTooBig = sessionLimit > 0 && sessionSize > sessionLimit
+
     const status = await this.safeSend(job.chatId, [
       job.scheduledFrom
         ? `🕒 Задача ${job.id} по расписанию ${job.scheduledFrom}: приступаю.`
         : job.continuationOf ? `▶️ Продолжаю задачу ${job.id} с вашим ответом.` : `▶️ Задача ${job.id}: приступаю.`,
+      sessionTooBig ? `_Беседа стала большой (${sessionSize.toLocaleString('ru-RU')} токенов контекста) — начал её с чистого листа, чтобы не платить за всю историю._` : '',
       issue === '' ? '' : `\n${issue}`,
     ].filter(Boolean).join('\n'), { replyToMessageId: this.jobReplyTo(job) })
     const statusMessageId = status?.messageId
@@ -1444,7 +1491,7 @@ export class AgentBot {
     // Unattended work (a schedule, a task from the bridge) starts a fresh DSH
     // session: inheriting the owner's long conversation would pay for its whole
     // context on every run — measured at 130k tokens for a one-line task.
-    const sessionId = job.freshSession
+    const sessionId = job.freshSession || sessionTooBig
       ? undefined
       : job.sessionId
         ?? (this.config.runtime.sessionContinuity ? this.state.get(`session:${job.chatId}`) : undefined)
@@ -1482,6 +1529,10 @@ export class AgentBot {
     })
     if (result.sessionId && this.config.runtime.sessionContinuity && !job.freshSession) {
       this.state.set(`session:${job.chatId}`, result.sessionId)
+      this.state.set(`sessionSize:${job.chatId}`, result.maxStepInputTokens ?? 0)
+    }
+    if (sessionTooBig) {
+      this.logger?.info('session context refreshed', { chatId: job.chatId, was: sessionSize, limit: sessionLimit })
     }
     this.running = undefined
 
@@ -1660,6 +1711,10 @@ export class AgentBot {
     const minutes = Math.max(1, Math.round(result.durationMs / 60000))
     let header = ''
     if (result.aborted) header = '⛔ Задача отменена.'
+    else if (result.stepsExceeded) {
+      header = `🛑 Остановил задачу: она превысила ${this.config.limits.taskMaxSteps} шагов. `
+        + 'Похоже, агент ушёл исследовать вместо того, чтобы сделать; задачу стоит сузить.'
+    }
     else if (result.budgetExceeded) {
       header = `🛑 Остановил задачу: расход превысил ${this.config.limits.taskTokenBudget.toLocaleString('ru-RU')} токенов. `
         + 'Обычно это значит, что агент зациклился; задачу лучше переформулировать или разбить.'

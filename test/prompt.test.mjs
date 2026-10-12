@@ -83,3 +83,10 @@ test('the prompt says how an image was understood', () => {
   })
   assert.match(unreadable, /изображение не прочитано/)
 })
+
+test('a drafted plan travels with the task, an empty one changes nothing', () => {
+  const withPlan = buildTaskPrompt({ text: 'собери отчёт', plan: '- собрать данные\n- оформить xlsx' })
+  assert.match(withPlan, /план для неё уже набросан/)
+  assert.match(withPlan, /оформить xlsx/)
+  assert.equal(buildTaskPrompt({ text: 'собери отчёт', plan: '' }).includes('план'), false)
+})

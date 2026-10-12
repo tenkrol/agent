@@ -117,6 +117,55 @@ test('cancelling the plan closes the task without a run', async () => {
   }
 })
 
+test('an unattended task gets a plan without waiting for approval', async () => {
+  const calls = []
+  const env = await createBotHarness({ runner: runStub(calls) })
+  try {
+    env.bot.quick = planner()
+    // A task from the bridge: nobody can approve anything.
+    await env.bot.submitBridgedTask({ task: 'собери отчёт по продажам за квартал и оформи в xlsx', source: 'chat-bot' })
+    await env.bot.worker
+
+    assert.equal(calls.length, 1, 'задача не вставала на утверждение')
+    assert.match(calls[0], /план для неё уже набросан/)
+    assert.match(calls[0], /собрать данные/, 'план попал в промпт')
+    const record = env.journal.recent(1)[0]
+    assert.equal(record.status, 'done')
+    assert.equal(record.plan, undefined, 'в журнал план не пишем: утверждать его некому')
+    assert.ok(env.usage.tokens(new Date(), 'Europe/Moscow') > 0, 'расход планировщика учтён')
+  } finally {
+    await env.close()
+  }
+})
+
+test('a small unattended task is not planned at all', async () => {
+  const calls = []
+  const env = await createBotHarness({ runner: runStub(calls) })
+  try {
+    const fetchImpl = async () => { throw new Error('планировщик не должен вызываться') }
+    env.bot.quick = new QuickClient({ apiKey: 'sk-test', logger: createTestLogger(), fetchImpl })
+    await env.bot.submitBridgedTask({ task: 'ответь одним словом: ок', source: 'chat-bot' })
+    await env.bot.worker
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].includes('план'), false, 'план не подмешивался')
+  } finally {
+    await env.close()
+  }
+})
+
+test('planning for unattended work can be switched off', async () => {
+  const calls = []
+  const env = await createBotHarness({ runner: runStub(calls), configEnv: { PLAN_UNATTENDED: 'false' } })
+  try {
+    env.bot.quick = planner()
+    await env.bot.submitBridgedTask({ task: 'собери отчёт по продажам за квартал и оформи в xlsx', source: 'chat-bot' })
+    await env.bot.worker
+    assert.equal(calls[0].includes('план для неё уже набросан'), false)
+  } finally {
+    await env.close()
+  }
+})
+
 test('a planner that fails does not block the task', async () => {
   const calls = []
   const env = await createBotHarness({ runner: runStub(calls) })
