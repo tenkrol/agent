@@ -88,7 +88,7 @@ test('a task runs, the answer and the file go out, usage is recorded', async () 
     assert.ok(env.platform.sent.some((entry) => /Готово/.test(entry.markdown)))
     assert.equal(env.usage.tokens(), 160)
     assert.equal(env.state.get('session:42'), 'session-stub-1')
-    assert.ok(env.platform.edits.some((entry) => /выполнена/.test(entry.markdown)))
+    assert.equal(env.platform.edits.length, 0, 'brief: ни «приступаю», ни прогресса, ни «выполнена»')
   } finally {
     await env.close()
   }
@@ -346,6 +346,42 @@ test('a failed run is reported with its diagnostics', async () => {
     const answer = env.platform.sent.map((entry) => entry.markdown).join('\n')
     assert.match(answer, /кодом 1/)
     assert.match(answer, /MODEL_ERROR/)
+  } finally {
+    await env.close()
+  }
+})
+
+test('verbose-режим сохраняет статусы', async () => {
+  const env = await makeBot({ configEnv: { REPORT_STYLE: 'verbose' } })
+  try {
+    env.bot.runner = { async run() { return okResult({ text: 'готово' }) } }
+    await env.bot.handleUpdate(message({ text: 'посчитай что-нибудь' }))
+    await env.bot.worker
+    assert.ok(env.platform.sent.some((entry) => /приступаю/.test(entry.markdown)), 'объявляет о старте')
+    assert.ok(env.platform.edits.some((entry) => /выполнена/.test(entry.markdown)), 'отмечает завершение')
+  } finally {
+    await env.close()
+  }
+})
+
+test('brief-режим: одна задача — одно сообщение', async () => {
+  const env = await makeBot()
+  try {
+    env.bot.runner = {
+      async run() {
+        await fs.mkdir(path.join(env.ws, 'outbox'), { recursive: true })
+        await fs.writeFile(path.join(env.ws, 'outbox', 'итог.txt'), 'данные')
+        return okResult({ text: 'Готово, файл в outbox/итог.txt' })
+      },
+    }
+    await env.bot.handleUpdate(message({ text: 'сделай файл' }))
+    await env.bot.worker
+    const texts = env.platform.sent.filter((entry) => entry.markdown)
+    assert.equal(texts.length, 1, `ожидали один итог, получили ${texts.length}: ${texts.map((e) => e.markdown.slice(0, 20)).join(' | ')}`)
+    assert.match(texts[0].markdown, /Готово, файл/)
+    assert.match(texts[0].markdown, /шаг|токен/, 'итог содержит стоимость и шаги')
+    assert.equal(env.platform.documents.length, 1, 'файл по-прежнему уходит')
+    assert.equal(env.platform.edits.length, 0)
   } finally {
     await env.close()
   }

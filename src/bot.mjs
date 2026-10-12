@@ -792,10 +792,10 @@ export class AgentBot {
    * report should leave a copy that is findable in a month. A failure here is
    * logged and reported but never turns a finished task into a failed one.
    */
-  async uploadToDisk({ job, outputs }) {
-    if (!this.disk?.enabled) return
+  async uploadToDisk({ job, outputs, silent = false }) {
+    if (!this.disk?.enabled) return []
     const files = outputs?.selected ?? []
-    if (files.length === 0) return
+    if (files.length === 0) return []
     const folder = joinPath(this.disk.dir, job.id)
     const uploaded = []
     for (const file of files) {
@@ -811,9 +811,14 @@ export class AgentBot {
       if (result.ok) uploaded.push({ relPath: file.relPath, remote: target, size: file.size })
       else this.logger?.warn('disk upload failed', { file: file.relPath, error: result.error })
     }
-    if (uploaded.length === 0) return
+    if (uploaded.length === 0) return []
 
     await this.journal?.update(job.id, { disk: uploaded.map((item) => item.remote) })
+    if (silent) {
+      // Пути попадут в единственный итоговый отчёт, отдельного сообщения не нужно.
+      this.logger?.info('deliverables stored on disk', { taskId: job.id, count: uploaded.length, folder })
+      return uploaded.map((item) => item.remote)
+    }
     let link = ''
     if (this.config.disk.publish) {
       const published = await this.disk.publish(uploaded[0].remote)
@@ -825,6 +830,7 @@ export class AgentBot {
       link,
     ].filter((part) => part !== '').join('\n'), { replyToMessageId: this.jobReplyTo(job) })
     this.logger?.info('deliverables stored on disk', { taskId: job.id, count: uploaded.length, folder })
+    return uploaded.map((item) => item.remote)
   }
 
   /** `/disk` — state, recent files, and the two actions worth having. */
@@ -1552,7 +1558,14 @@ export class AgentBot {
     const sessionLimit = this.config.runtime.sessionMaxTokens
     const sessionTooBig = sessionLimit > 0 && sessionSize > sessionLimit
 
-    const status = await this.safeSend(job.chatId, [
+    // brief: никаких промежуточных сообщений — ни «приступаю», ни прогресса.
+    // markStatus и publishProgress молчат без messageId, поэтому достаточно не
+    // отправлять стартовое сообщение; всё важное (проблемы вложений, пути на
+    // Диске, стоимость) уходит одним итогом в конце.
+    const brief = this.config.report.style === 'brief'
+    job.issue = issue
+
+    const status = brief ? undefined : await this.safeSend(job.chatId, [
       job.scheduledFrom
         ? `🕒 Задача ${job.id} по расписанию ${job.scheduledFrom}: приступаю.`
         : job.continuationOf ? `▶️ Продолжаю задачу ${job.id} с вашим ответом.` : `▶️ Задача ${job.id}: приступаю.`,
@@ -1674,9 +1687,9 @@ export class AgentBot {
       status: statusKind,
       error: result.ok || result.aborted ? undefined : (result.stderr?.slice(-300) || `код ${result.exitCode}`),
     })
-    await this.reportResult({ job, result, statusMessageId })
+    const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
+    await this.reportResult({ job, result, statusMessageId, diskPaths })
     await this.sendOutputs({ job, outputs })
-    await this.uploadToDisk({ job, outputs })
     await this.sendVoiceAnswer({ job, result })
     await this.maybeWarnLimit()
     await this.maybeWarnWorkspace()
@@ -1791,7 +1804,7 @@ export class AgentBot {
   }
 
   /** Answer text for the finished task. */
-  async reportResult({ job, result, statusMessageId }) {
+  async reportResult({ job, result, statusMessageId, diskPaths = [] }) {
     const minutes = Math.max(1, Math.round(result.durationMs / 60000))
     let header = ''
     if (result.aborted) header = '⛔ Задача отменена.'
@@ -1829,6 +1842,12 @@ export class AgentBot {
     if (warnAt > 0 && result.usage.totalTokens > warnAt && !result.aborted) {
       const warnCost = costOf(result.usage, this.pricingOptions())
       parts.push(`💰 Дорогая задача: ${result.usage.totalTokens.toLocaleString('ru-RU')} токенов за ${result.usage.steps} шаг(ов), ≈${formatUsd(warnCost.usd)}.`)
+    }
+
+    // В brief-режиме статуса нет, поэтому проблемы вложений и архив сообщаем здесь.
+    if (this.config.report.style === 'brief' && job.issue) parts.push(job.issue)
+    if (this.config.report.style === 'brief' && diskPaths.length > 0) {
+      parts.push(`📁 Файлы задачи ${job.id} лежат на Яндекс.Диске: ${diskPaths.join(', ')}`)
     }
 
     await this.markStatus({

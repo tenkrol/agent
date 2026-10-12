@@ -67,7 +67,9 @@ test('a due schedule runs its task and moves to the next occurrence', async () =
     const journal = env.journal.recent(1)[0]
     assert.equal(journal.scheduledFrom, record.id)
     assert.equal(journal.status, STATUS.done)
-    assert.ok(env.platform.sent.some((entry) => /по расписанию/.test(entry.markdown)))
+    assert.ok(env.platform.sent.length >= 1, 'итог задачи ушёл владельцу')
+    assert.equal(env.platform.sent.some((entry) => /приступаю|по расписанию/.test(entry.markdown)), false,
+      'brief: служебных сообщений о запуске нет')
   } finally {
     await env.close()
   }

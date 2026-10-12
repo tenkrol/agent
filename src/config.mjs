@@ -102,6 +102,9 @@ const DEFAULTS = {
   ROUTER_MAX_TOKENS: '700',
   ROUTER_TIMEOUT_MS: '60000',
 
+  // Сколько сообщений получает владелец на одну задачу.
+  REPORT_STYLE: 'brief',
+
   // Этап 1: алерты. auto — включить сами, когда этап 0 наберёт базовую линию.
   ALERTS_MODE: 'auto',
   ALERT_DEDUP_MIN: '60',
@@ -433,6 +436,11 @@ export function loadConfig(env = process.env) {
     // Один блок на все алерты: и «дорого по лимиту» (обработчик лимитов),
     // и автономные триггеры этапа 1. Двух одноимённых ключей быть не должно —
     // в JS побеждает последний, и автономные настройки молча терялись.
+    report: {
+      // brief — одно итоговое сообщение на задачу (без «приступаю», прогресса и
+      // «выполнена»); verbose — прежнее поведение со статусами.
+      style: choice(read(env, 'REPORT_STYLE'), 'REPORT_STYLE', ['brief', 'verbose'], 'brief'),
+    },
     alerts: {
       chatId: String(env.ALERT_CHAT_ID ?? '').trim(),
       limitPercent: positiveInt(read(env, 'ALERT_ON_LIMIT_PERCENT'), 'ALERT_ON_LIMIT_PERCENT', { min: 1, max: 100 }),
