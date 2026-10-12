@@ -50,7 +50,8 @@ fi
 log "пользователь $AGENT_USER читает токен"
 
 # 4. Туннель до точки приёма бота.
-if systemctl list-unit-files | grep -q "^$TUNNEL"; then
+# list-unit-files обрезает длинные имена, поэтому спрашиваем systemd напрямую.
+if systemctl cat "$TUNNEL" >/dev/null 2>&1; then
   systemctl is-enabled --quiet "$TUNNEL" || systemctl enable "$TUNNEL" >/dev/null 2>&1
   systemctl is-active --quiet "$TUNNEL" || systemctl restart "$TUNNEL"
   log "туннель: $(systemctl is-active "$TUNNEL")"
