@@ -1141,3 +1141,13 @@ PLA-14: агентская часть (контракт v2, события, `ack
 - `usage:{}` без `total_tokens` суммируется по известным полям, иначе unknown (не 0).
 - Тесты: **428 зелёных** (+5 к 423): операции lifecycle, планирование/отмена, остаток
   бюджета, usage-фолбэк. Merge и установка не выполнялись.
+
+## 2026-10-18: PLA-21/PLA-22 влиты и заархивированы
+
+- PLA-21: отмена проверки с signal во все порты, бюджет проверки (usage/остаток времени),
+  быстрый путь через оркестратор, единый budget quick→DSH.
+- PLA-22: `lifecycle-manager` владеет очередью, восстановлением, awaiting и терминальными
+  переходами; `AgentBot` только вход/доставка; `parkForPlan`/`maybePlanUnattended` в общем
+  signal/budget; usage без total_tokens — сумма известных полей или unknown.
+- Дельты влиты в `openspec/specs/{orchestration,verification,core}`, изменения в
+  `changes/archive/PLA-21`, `PLA-22`. Тесты: 428.
