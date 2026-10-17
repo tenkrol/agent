@@ -583,3 +583,17 @@ bearer-токен. Наружу порт не открыт, TLS не нужен.
 - Задеплоено, сервис active, задача через мост принята.
 - Дельта влита в `openspec/specs/integrations/spec.md`, изменение в архиве.
 - Следующее в очереди — `extract-execution`.
+
+## 2026-10-17: extract-execution закрыт
+
+- Домен `src/execution/`: `dsh-task.mjs`, `cgroup.mjs`, `prompt.mjs`, `reply-protocol.mjs`,
+  `quick.mjs`, `workspace.mjs`; публичный API — `index.mjs` (export * по модулям домена).
+  Импорты обновлены в `bot.mjs`, `index.mjs` и восьми тестах.
+- Сторожевой тест: `node:child_process` только в execution (исключение — `ocr.mjs` до
+  `extract-tools`). Добавлен тест индексов доменов и тест «модули не лежат в корне src»
+  (в корне пока остаются ядро, `schedule.mjs` и будущие домены).
+- Промпты, лимиты, протокол `ВОПРОС:`/`ВАРИАНТ N:` и формат результата не менялись. Тестов 309.
+- Живая проверка: задача `154042-nr0` — 1 шаг, 8 504 токена, файл `outbox/note.txt` создан и
+  выгружен на Диск (`/Агент/154042-nr0/note.txt`).
+- Дельта влита в `openspec/specs/execution/spec.md`, изменение в архиве.
+- Следующее в очереди — `extract-tools`.
