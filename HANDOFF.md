@@ -512,3 +512,20 @@ bearer-токен. Наружу порт не открыт, TLS не нужен.
 `extract-bot-link`, `extract-autonomy`, `slim-core`, `openspec-tooling`.
 
 `bash tools/spec-check.sh` — «структура в порядке», тестов 288, поведение не менялось.
+
+## 2026-10-17 (продолжение): карта архитектуры одобрена, выделен домен secrets
+
+Владелец одобрил карту и попросил вынести `secrets` в отдельный домен. Сделано:
+- в спеку добавлен 12-й домен `secrets` (шифртекст `secrets/agent.env.enc`, реестр имён
+  `secrets/keys.md`, расшифровка `tools/secrets.sh`, ротация; домены не читают файлы
+  секретов напрямую — только нужные поля из `config`) и три сценария: новая машина,
+  задача просит ключ, ротация;
+- очередь изменений стала 11 шагов: после `extract-config` идёт `extract-secrets`, дальше
+  `storage → integrations → execution → tools → delivery → bot-link → autonomy → slim-core`;
+- изменение `2026-10-17-architecture-map` **заархивировано**, дельта влита в
+  `openspec/specs/architecture/spec.md` — теперь это постоянная спека;
+- заведено первое рабочее изменение `2026-10-17-extract-config` (настройки агента):
+  `src/config/{index,env,values,sections}.mjs`, сторожевой тест «process.env только в
+  config», поведение не меняется. Ждёт одобрения дельты, затем реализация.
+
+Структура проверена: `bash tools/spec-check.sh` — «структура в порядке».
