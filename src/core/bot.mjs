@@ -1992,9 +1992,15 @@ export class AgentBot {
     if (this.running) {
       await this.safeSend(job.chatId, `📋 Принял, задача ${job.id} в очереди (позиция ${this.queue.length}).`)
     }
-    this.worker = this.worker.then(() => this.drain()).catch((error) => {
-      this.logger?.error('worker failed', { error })
-    })
+    // With several queue workers a new task must start another drain loop right
+    // away; the SQLite lease prevents the same task from being claimed twice.
+    if ((this.config.queue?.workers ?? 1) > 1) {
+      this.worker = Promise.allSettled([this.worker, this.drain()]).then(() => {})
+    } else {
+      this.worker = this.worker.then(() => this.drain()).catch((error) => {
+        this.logger?.error('worker failed', { error })
+      })
+    }
     return { queued: true, duplicate: false, taskId: job.id, position: this.queue.length }
   }
 
