@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { AgentBot } from './bot.mjs'
 import { CgroupLimiter } from './cgroup.mjs'
 import { createBridgeServer } from './bridge-http.mjs'
-import { ConfigError, loadConfig, secretsOf } from './config.mjs'
+import { ConfigError, loadConfig, secretsOf } from './config/index.mjs'
 import { DshTaskRunner } from './dsh-task.mjs'
 import { createLogger } from './logger.mjs'
 import { OcrClient } from './ocr.mjs'
@@ -49,7 +49,7 @@ async function assertDshUsable(bin) {
 async function main() {
   let config
   try {
-    config = loadConfig(process.env)
+    config = loadConfig()
   } catch (error) {
     if (error instanceof ConfigError) fatal(error.message)
     throw error

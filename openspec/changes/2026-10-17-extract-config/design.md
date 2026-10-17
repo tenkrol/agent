@@ -10,12 +10,16 @@
 ## Предлагаемое решение
 ```
 src/config/
-  index.mjs     публичный API: loadConfig, ConfigError, secretsOf
-  env.mjs       чтение process.env и значения по умолчанию
-  values.mjs    валидаторы (choice, positiveInt, clockMinutes, …)
-  sections.mjs  сборка секций конфига
+  index.mjs   публичный API: loadConfig, ConfigError, secretsOf, сборка секций
+  env.mjs     DEFAULTS и read — единственное место с process.env
+  values.mjs  валидаторы (choice, positiveInt, clockMinutes, …)
 src/config.mjs  тонкая совместимость: export * from './config/index.mjs'
 ```
+
+Проверка показала, что `config.mjs` импортируют всего два исходных файла (`src/index.mjs`,
+`src/alerts-cli.mjs`) — перенос почти не задевает остальной код, а сторожевой тест сразу
+нашёл настоящий обход: `bot.mjs` читал `OUTBOX_TOKEN`/`OUTBOX_URL` напрямую. Эта настройка
+переехала в секцию `outbox`, токен добавлен в `secretsOf`.
 - Публичный API не меняется: `loadConfig(process.env)` возвращает тот же объект.
 - `src/config.mjs` остаётся как однострочный реэкспорт, чтобы не ломать внешние вызовы
   и тесты; удаляется на шаге `slim-core`.
@@ -24,7 +28,8 @@ src/config.mjs  тонкая совместимость: export * from './config
   `src/index.mjs`, где окружение передаётся в `loadConfig`).
 
 ## Влияние
-- Механический дифф по ~30 файлам (только строка импорта), поведение не меняется.
+- Дифф маленький: два импорта и одна настройка, вынесенная из `bot.mjs` в конфиг.
+  Поведение не меняется: те же значения по умолчанию, тот же адрес точки приёма.
 - Риск: забытая замена импорта — ловится полным прогоном тестов и стартом сервиса.
 - Откат: переключить `/opt/agent` на предыдущий релиз.
 

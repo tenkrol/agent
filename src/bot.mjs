@@ -1977,7 +1977,7 @@ export class AgentBot {
     try {
       const sent = await this.platform.sendText({ chatId, markdown, keyboard, replyToMessageId })
       // Дублируем ответ в чат-бот: владелец ведёт диалог там, и его ответ продолжает ту же беседу.
-      void mirrorToAssistant(markdown).catch(() => {})
+      void mirrorToAssistant(markdown, this.config).catch(() => {})
       return sent
     } catch (error) {
       this.logger?.error('sendMessage failed', { chatId, error })
@@ -2016,14 +2016,14 @@ const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** Отправить текст ответа в точку приёма чат-бота (OUTBOX_TOKEN приходит из окружения). */
-async function mirrorToAssistant(text) {
-  const token = process.env.OUTBOX_TOKEN
+/** Отправить текст ответа в точку приёма чат-бота (настройки — из домена config). */
+async function mirrorToAssistant(text, config) {
+  const token = config?.outbox?.token
   if (!token) return
   const body = String(text ?? '').trim()
   if (!body) return
   try {
-    await fetch(process.env.OUTBOX_URL ?? 'http://127.0.0.1:8788/outbox', {
+    await fetch(config.outbox.url || 'http://127.0.0.1:8788/outbox', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ text: body.slice(0, 3500), title: 'Ответ агента' }),

@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { loadConfig } from './config.mjs'
+import { loadConfig } from './config/index.mjs'
 import { AlertState, classifyErrors, DEFAULT_POLICY, evaluateTriggers, inQuietHours, minutesOfDay, parseQuietHours, renderAlert, renderDigest } from './alerts.mjs'
 import { sendTelegram } from './notify.mjs'
 import { baseline, loadObservations, OBSERVATIONS_FILE, readiness } from './observe.mjs'
@@ -27,7 +27,7 @@ const logger = {
 
 /** Чат владельца: явный ALERT_CHAT_ID, иначе первый разрешённый — как в боте. */
 const ownerChatId = () => {
-  const config = loadConfig(process.env)
+  const config = loadConfig()
   return config.alerts.chatId || [...config.telegram.allowedUserIds][0]
 }
 
