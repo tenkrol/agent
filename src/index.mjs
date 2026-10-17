@@ -29,6 +29,10 @@ import { DeliveryStore } from './storage/deliveries.mjs'
 import { RequestStore } from './storage/requests.mjs'
 import { FileStore } from './storage/files.mjs'
 import { DeliveryWorker } from './bot-link/deliver.mjs'
+import { verify, deriveCriteria, detectResultKind, isVerificationNeeded, disabledVerification } from './verification/index.mjs'
+import { inspectDocument, inspectSpreadsheet, recalcSpreadsheet, renderDocument } from './tools/verify.mjs'
+import { runCodeChecks } from './execution/checks.mjs'
+import { createModelClient } from './integrations/model.mjs'
 import { createSynthesizer } from './tools/tts.mjs'
 import { UsageStore } from './storage/usage.mjs'
 import { VisionClient } from './tools/vision.mjs'
@@ -127,6 +131,38 @@ async function main() {
     retryMs: config.delivery.retryMs,
     maxAttempts: config.delivery.maxAttempts,
   })
+
+  const modelClient = createModelClient({
+    baseUrl: config.routing.baseUrl,
+    apiKey: config.routing.apiKey,
+    model: config.routing.model,
+    timeoutMs: config.routing.timeoutMs,
+  })
+  const verifyPorts = {
+    inspectDocument,
+    inspectSpreadsheet,
+    recalcSpreadsheet,
+    renderDocument,
+    runCodeChecks,
+    askModel: modelClient.enabled ? (prompt) => modelClient.askModel(prompt) : undefined,
+  }
+  const verifier = {
+    enabled: config.verify.enabled,
+    maxAttempts: config.verify.maxAttempts,
+    notRequired: () => ({ status: 'not_required', criteria: [], limitations: [], checkedAt: Date.now(), kind: 'none' }),
+    disabled: () => disabledVerification(),
+    applicable: ({ taskText, files }) => isVerificationNeeded({
+      taskText,
+      files,
+      criteria: deriveCriteria({ taskText, files }).criteria,
+    }),
+    evaluate: (input) => verify({
+      ...input,
+      allowlist: config.verify.allowlist,
+      timeoutMs: config.verify.timeoutMs,
+      ports: verifyPorts,
+    }),
+  }
 
   /** @type {AgentBot} */
   let bot
@@ -245,6 +281,7 @@ async function main() {
     delivery,
     requests,
     files,
+    verifier,
     schedules,
     vision: visionEnabled ? vision : undefined,
     ocr: ocrAvailable ? ocr : undefined,

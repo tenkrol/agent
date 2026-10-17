@@ -120,7 +120,7 @@ export class AgentBot {
    * @param {string} [options.instructionsPath] - `AGENTS.md` template to install.
    * @param {() => Date} [options.now] - clock, injected by tests.
    */
-  constructor({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
+  constructor({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, verifier, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
     this.config = config
     this.platform = platform
     this.runner = runner
@@ -131,6 +131,7 @@ export class AgentBot {
     this.delivery = delivery
     this.requests = requests
     this.files = files
+    this.verifier = verifier
     this.schedules = schedules
     this.vision = vision
     this.ocr = ocr
@@ -2214,8 +2215,28 @@ export class AgentBot {
       maxBytes: this.config.workspace.maxOutputFileBytes,
     })
 
+    // Проверка результата (PLA-15): до финального статуса, отдельно от выполнения.
+    let verification
+    if (this.verifier) {
+      if (!this.verifier.enabled) verification = this.verifier.disabled()
+      else if (!this.verifier.applicable({ taskText: job.text, files: outputs.selected })) verification = this.verifier.notRequired()
+      else {
+        try {
+          await this.journal?.transition(job.id, STATUS.verifying, { reason: 'проверка результата' })
+        } catch (error) {
+          this.logger?.warn('verify transition failed', { taskId: job.id, error })
+        }
+        try {
+          verification = await this.verifier.evaluate({ taskText: job.text, files: outputs.selected, answer: result.text, root: dir })
+        } catch (error) {
+          verification = { status: 'unavailable', criteria: [], limitations: [String(error?.message ?? error)], checkedAt: this.now().getTime() }
+        }
+      }
+    }
+
     const cost = costOf(spent, this.pricingOptions())
     await this.journal?.update(job.id, {
+      verification,
       durationMs: result.durationMs,
       steps: spent.steps,
       tokens: {
@@ -2248,11 +2269,14 @@ export class AgentBot {
     // Остановка сервиса — не отмена владельцем: задача должна пережить рестарт
     // как прерванная и не считаться завершённой.
     const stoppedByShutdown = this.stopping && result.aborted
+    const verificationFailed = verification && ['partial', 'failed', 'unavailable'].includes(verification.status)
     const statusKind = stoppedByShutdown
       ? STATUS.interrupted
       : result.aborted
         ? STATUS.cancelled
-        : result.ok && !result.timedOut ? STATUS.done : STATUS.failed
+        : result.ok && !result.timedOut
+          ? (verificationFailed ? STATUS.partial : STATUS.done)
+          : STATUS.failed
     const reason = stoppedByShutdown
       ? 'перезапуск сервиса'
       : result.aborted
@@ -2266,6 +2290,7 @@ export class AgentBot {
             : result.ok ? undefined : 'exit'
     await this.journal?.close(job.id, {
       status: statusKind,
+      verification,
       reason,
       error: result.ok || result.aborted ? undefined : (result.stderr?.slice(-300) || `код ${result.exitCode}`),
     })
@@ -2275,7 +2300,7 @@ export class AgentBot {
     }
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
     const resultFiles = job.route ? await this.registerResultFiles(job, outputs) : []
-    await this.reportResult({ job, result, statusMessageId, diskPaths, resultFiles })
+    await this.reportResult({ job, result, statusMessageId, diskPaths, resultFiles, verification })
     if (!job.route) {
       await this.sendOutputs({ job, outputs })
       await this.sendVoiceAnswer({ job, result })
@@ -2438,13 +2463,14 @@ export class AgentBot {
   }
 
   /** Answer text for the finished task. */
-  async reportResult({ job, result, statusMessageId, diskPaths = [], resultFiles = [] }) {
+  async reportResult({ job, result, statusMessageId, diskPaths = [], resultFiles = [], verification }) {
     // Текст ответа собирает домен delivery: ядро передаёт только данные и числа.
     const cost = costOf(result.usage, this.pricingOptions())
     const usdText = formatUsd(cost.usd)
     const text = composeReportText({
       result,
       job,
+      verification,
       limits: this.config.limits,
       reportStyle: this.config.report.style,
       maxAnswerChars: this.config.workspace.maxAnswerChars,

@@ -6,7 +6,7 @@
  */
 
 /** Заголовок отчёта по результату задачи. */
-export function buildHeader({ result, limits } = {}) {
+export function buildHeader({ result, limits, verification } = {}) {
   if (result?.aborted) return '⛔ Задача отменена.'
   if (result?.stepsExceeded) {
     return `🛑 Остановил задачу: она превысила ${limits.taskMaxSteps} шагов. `
@@ -15,6 +15,9 @@ export function buildHeader({ result, limits } = {}) {
   if (result?.budgetExceeded) {
     return `🛑 Остановил задачу: расход превысил ${limits.taskTokenBudget.toLocaleString('ru-RU')} токенов. `
       + 'Обычно это значит, что агент зациклился; задачу лучше переформулировать или разбить.'
+  }
+  if (verification && ['partial', 'failed', 'unavailable'].includes(verification.status) && result?.ok) {
+    return '⚠️ Выполнено частично: не все проверки результата пройдены.'
   }
   if (result?.timedOut) {
     return `⌛ Превышен лимит времени (${Math.round(limits.taskTimeoutMs / 60000)} мин), выполнение остановлено.`
@@ -57,6 +60,28 @@ export function buildBriefNotes({ reportStyle, issue, taskId, diskPaths = [] } =
   return notes
 }
 
+/** Строка о проверке результата: что проверено, а что нет. */
+export function buildVerificationNote({ verification } = {}) {
+  if (!verification) return ''
+  const status = verification.status
+  if (status === 'disabled') return 'Проверка отключена (VERIFY=false): результат не проверялся.'
+  if (status === 'not_required') return 'Проверка не требуется для этого результата.'
+  const lines = []
+  const passed = (verification.criteria ?? []).filter((item) => item.status === 'passed').map((item) => item.id)
+  const failed = (verification.criteria ?? []).filter((item) => item.status === 'failed')
+  const unavailable = (verification.criteria ?? []).filter((item) => item.status === 'unavailable')
+  if (status === 'passed') lines.push(`Проверка: пройдена${passed.length ? ` (${passed.join(', ')})` : ''}.`)
+  else if (status === 'failed') lines.push('Проверка: не пройдена.')
+  else if (status === 'unavailable') lines.push('Проверка недоступна: результат не проверен.')
+  else lines.push('Проверка: частично.')
+  if (failed.length > 0) lines.push(`Не прошло: ${failed.map((item) => `${item.id} — ${item.evidence || item.notes || 'без деталей'}`).join('; ')}`)
+  if (unavailable.length > 0) lines.push(`Не проверено: ${unavailable.map((item) => `${item.id}${item.notes ? ` (${item.notes})` : ''}`).join('; ')}`)
+  if (Array.isArray(verification.limitations) && verification.limitations.length > 0 && status !== 'passed') {
+    lines.push(`Ограничения проверки: ${verification.limitations.slice(0, 5).join('; ')}`)
+  }
+  return lines.join('\n')
+}
+
 /**
  * Полный текст ответа.
  *
@@ -64,9 +89,11 @@ export function buildBriefNotes({ reportStyle, issue, taskId, diskPaths = [] } =
  * @returns {string} текст для чата.
  */
 export function composeReportText(request = {}) {
-  const { result, job, limits, reportStyle, maxAnswerChars, errorTailChars, diskPaths = [], footer, usdText } = request
-  const header = buildHeader({ result, limits })
+  const { result, job, limits, reportStyle, maxAnswerChars, errorTailChars, diskPaths = [], footer, usdText, verification } = request
+  const header = buildHeader({ result, limits, verification })
   const parts = [header, buildBody({ result, maxAnswerChars }), buildDiagnostics({ result, errorTailChars })]
+  const verificationNote = buildVerificationNote({ verification })
+  if (verificationNote !== '') parts.push(verificationNote)
   if (footer) parts.push(buildFooter(footer))
   // Предупреждение о дорогой задаче не показываем для отменённой задачи — как и раньше.
   if (!result?.aborted) {

@@ -154,6 +154,17 @@ export function loadConfig(env = process.env) {
     files: {
       maxBytes: positiveInt(read(env, 'FILES_MAX_BYTES'), 'FILES_MAX_BYTES', { min: 1024, max: 500_000_000 }),
     },
+    verify: {
+      enabled: boolean(read(env, 'VERIFY'), 'VERIFY'),
+      maxAttempts: positiveInt(read(env, 'VERIFY_MAX_ATTEMPTS'), 'VERIFY_MAX_ATTEMPTS', { min: 0, max: 5, allowZero: true }),
+      timeoutMs: positiveInt(read(env, 'VERIFY_TIMEOUT_MS'), 'VERIFY_TIMEOUT_MS', { min: 10_000, max: 1_800_000 }),
+      render: boolean(read(env, 'VERIFY_RENDER'), 'VERIFY_RENDER'),
+      modelMaxChars: positiveInt(read(env, 'VERIFY_MODEL_MAX_CHARS'), 'VERIFY_MODEL_MAX_CHARS', { min: 1000, max: 200_000 }),
+      allowlist: String(read(env, 'VERIFY_CHECK_ALLOWLIST')).split(';')
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => value.split(/s+/)),
+    },
     voice: {
       stt: {
         provider: choice(read(env, 'STT_PROVIDER'), 'STT_PROVIDER', ['none', 'yandex', 'openai'], 'none'),

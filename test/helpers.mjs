@@ -157,7 +157,7 @@ export function testConfig(dir, overrides = {}) {
  * @param {object} [options] - `runner`, `configEnv`, `vision`, `ocr`.
  * @returns {Promise<object>} the environment, with `close()` to clean up.
  */
-export async function createBotHarness({ runner = createStubRunner(), configEnv = {}, vision, ocr, now, mirror, seedJournal, deliveryFetch, deliveryOutbox } = {}) {
+export async function createBotHarness({ runner = createStubRunner(), configEnv = {}, vision, ocr, now, mirror, seedJournal, deliveryFetch, deliveryOutbox, verifier } = {}) {
   const dir = await tempDir()
   const config = testConfig(dir, configEnv)
   const platform = createStubPlatform()
@@ -212,7 +212,7 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
   })
   // Тест восстановления подкладывает готовый журнал до старта бота.
   if (seedJournal) await seedJournal({ journal, state, dir, config, path, actions })
-  const bot = new AgentBot({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, schedules, vision, ocr, memory, logger, now, mirror })
+  const bot = new AgentBot({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, verifier, schedules, vision, ocr, memory, logger, now, mirror })
   await bot.start()
   return {
     dir,

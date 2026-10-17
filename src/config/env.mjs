@@ -56,6 +56,14 @@ export const DEFAULTS = {
   DELIVERY_RETRY_MS: '60000,300000,900000,3600000,21600000',
   DELIVERY_MAX_ATTEMPTS: '8',
   DELIVERY_TEXT_CHARS: '3500',
+
+  // Проверка результата (PLA-15). Allowlist — argv-команды через «;», без оболочки.
+  VERIFY: 'true',
+  VERIFY_MAX_ATTEMPTS: '1',
+  VERIFY_TIMEOUT_MS: '300000',
+  VERIFY_RENDER: 'true',
+  VERIFY_MODEL_MAX_CHARS: '12000',
+  VERIFY_CHECK_ALLOWLIST: 'node --test;npm test;npm run lint;npm run build;pytest;go test;cargo test;make test',
   FILES_MAX_BYTES: '20971520',
 
   // Model: the key is forwarded to DSH as DEEPSEEK_API_KEY before each run.
