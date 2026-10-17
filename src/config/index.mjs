@@ -174,7 +174,7 @@ export function loadConfig(env = process.env) {
       allowlist: String(read(env, 'VERIFY_CHECK_ALLOWLIST')).split(';')
         .map((value) => value.trim())
         .filter(Boolean)
-        .map((value) => value.split(/s+/)),
+        .map((value) => value.split(/\s+/)),
     },
     voice: {
       stt: {

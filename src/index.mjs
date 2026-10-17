@@ -178,8 +178,11 @@ async function main() {
     }),
     criteriaFor: ({ taskText, files }) => deriveCriteria({ taskText, files }).criteria,
     ambiguous: ({ taskText }) => {
+      const text = String(taskText)
       const derived = deriveCriteria({ taskText, files: [] })
-      return derived.kind === 'none' && /файл|документ|отчёт|презентац|таблиц/i.test(String(taskText))
+      // Явно названный формат/код — не неоднозначность, даже если есть слово «файл».
+      const explicit = /(docx|xlsx|pdf|csv|pptx|odt|ods|\.(mjs|js|cjs|ts|py|go|rs)|\bкод\b|тест|сборк)/i.test(text)
+      return derived.kind === 'none' && !explicit && /файл|документ|отчёт|презентац|таблиц/i.test(text)
     },
     clarify: () => 'Какой формат результата нужен — DOCX, XLSX, PDF или другой?',
     evaluate: (input) => verify({

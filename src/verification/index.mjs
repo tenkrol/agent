@@ -131,7 +131,19 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
       }
     }
   } else if (kind === 'code') {
-    const commands = Array.isArray(allowlist) ? allowlist : []
+    // Подходящие проверки по типу проекта, а не весь allowlist подряд.
+    const names = files.map((file) => String(file.name ?? file.relPath ?? '').toLowerCase())
+    const ext = (suffix) => names.some((name) => name.endsWith(suffix))
+    const wanted = []
+    if (ext('.go') || ext('go.mod')) wanted.push('go test')
+    else if (ext('.rs') || ext('cargo.toml')) wanted.push('cargo test')
+    else if (ext('.py') || ext('pytest.ini') || ext('pyproject.toml')) wanted.push('pytest')
+    else if (names.includes('package.json') || names.some((name) => /\.(mjs|cjs|js|ts|tsx)$/.test(name))) wanted.push('node --test', 'npm test')
+    else if (names.includes('makefile')) wanted.push('make test')
+    const all = Array.isArray(allowlist) ? allowlist : []
+    const commands = wanted.length > 0
+      ? all.filter((argv) => wanted.some((wantedCommand) => argv.join(' ').startsWith(wantedCommand)))
+      : []
     if (commands.length === 0 || !ports.runCodeChecks) {
       limitations.push(commands.length === 0 ? 'allowlist проверок пуст' : 'порт запуска проверок недоступен')
       for (const criterion of criteria) results.push(criterionResult(criterion, 'unavailable', '', limitations.at(-1)))
