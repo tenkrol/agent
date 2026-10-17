@@ -1100,7 +1100,7 @@ PLA-14: агентская часть (контракт v2, события, `ack
 
 ## 2026-10-18: PLA-20 — SQLite включён в production (workers=1)
 
-- `main` = `74ac75b`; релиз на Финляндии `release-20261017-230727`; сервис active.
+- `main` = `74ac75b`; релиз на Финляндии `release-20261017-230742`; сервис active.
 - Бэкап перед миграцией: `/var/lib/agent-backups/pla20-20261017-230513` (state + agent.env).
 - Включено: `QUEUE_STORE=sqlite`, `QUEUE_DB=/var/lib/agent/state/queue.db`,
   `QUEUE_WORKERS=1`. Очередь в SQLite (WAL), старый JSONL сохранён для отката.
