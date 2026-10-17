@@ -88,7 +88,12 @@ async function main() {
     retentionDays: config.limits.usageRetentionDays,
     dailyLimit: config.limits.dailyTokenLimit,
   }).load()
-  const memory = await createMemoryStore({ file: path.join(stateDir, 'memory.json'), logger }).load()
+  const memory = await createMemoryStore({
+    file: path.join(stateDir, 'memory.json'),
+    logger,
+    maxFacts: config.memory.maxFacts,
+    historyMax: config.memory.historyMax,
+  }).load()
   logger.info('memory loaded', { facts: memory.size })
   const journal = new TaskJournal({
     file: path.join(stateDir, 'tasks.jsonl'),

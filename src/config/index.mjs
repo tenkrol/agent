@@ -158,6 +158,13 @@ export function loadConfig(env = process.env) {
       maxVersions: positiveInt(read(env, 'PROCEDURES_MAX_VERSIONS'), 'PROCEDURES_MAX_VERSIONS', { min: 1, max: 200 }),
       retentionDays: positiveInt(read(env, 'PROCEDURES_RETENTION_DAYS'), 'PROCEDURES_RETENTION_DAYS', { min: 1, max: 3650 }),
     },
+    memory: {
+      contextChars: positiveInt(read(env, 'MEMORY_CONTEXT_CHARS'), 'MEMORY_CONTEXT_CHARS', { min: 200, max: 8000 }),
+      historyMax: positiveInt(read(env, 'MEMORY_HISTORY_MAX'), 'MEMORY_HISTORY_MAX', { min: 50, max: 5000 }),
+      taskRetentionDays: positiveInt(read(env, 'MEMORY_TASK_RETENTION_DAYS'), 'MEMORY_TASK_RETENTION_DAYS', { min: 0, max: 365, allowZero: true }),
+      maxFacts: positiveInt(read(env, 'MEMORY_MAX_FACTS'), 'MEMORY_MAX_FACTS', { min: 10, max: 1000 }),
+      secretScan: boolean(read(env, 'MEMORY_SECRET_SCAN'), 'MEMORY_SECRET_SCAN'),
+    },
     verify: {
       enabled: boolean(read(env, 'VERIFY'), 'VERIFY'),
       maxAttempts: positiveInt(read(env, 'VERIFY_MAX_ATTEMPTS'), 'VERIFY_MAX_ATTEMPTS', { min: 0, max: 5, allowZero: true }),

@@ -68,6 +68,13 @@ export const DEFAULTS = {
   // Личные процедуры (PLA-16).
   PROCEDURES_MAX_VERSIONS: '20',
   PROCEDURES_RETENTION_DAYS: '365',
+
+  // Управляемая память (PLA-17).
+  MEMORY_CONTEXT_CHARS: '1500',
+  MEMORY_HISTORY_MAX: '500',
+  MEMORY_TASK_RETENTION_DAYS: '7',
+  MEMORY_MAX_FACTS: '120',
+  MEMORY_SECRET_SCAN: 'true',
   FILES_MAX_BYTES: '20971520',
 
   // Model: the key is forwarded to DSH as DEEPSEEK_API_KEY before each run.

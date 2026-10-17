@@ -39,6 +39,7 @@ import { CronError, describeCron, nextRunAt, parseCron, parseScheduleAdd } from 
 import { buildContinuation, parseReply, variantButtonLabel } from '../execution/reply-protocol.mjs'
 import { STATUS, TERMINAL, describeTask } from '../storage/tasks.mjs'
 import { bodyHash } from '../storage/requests.mjs'
+import { redactSecrets } from '../secrets/guard.mjs'
 import { buildQuestionEvent, buildResultEvent } from '../bot-link/events.mjs'
 import { dayKey } from '../storage/usage.mjs'
 import {
@@ -699,7 +700,7 @@ export class AgentBot {
         await this.safeSend(chatId, await this.alertsText())
         return
       case '/memory':
-        await this.safeSend(chatId, await this.memoryText())
+        await this.safeSend(chatId, await this.memoryCommand(args))
         return
       case '/remember':
         await this.safeSend(chatId, await this.rememberText(args))
@@ -1112,12 +1113,27 @@ export class AgentBot {
 
   /** Add a fact by hand. */
   async rememberText(args) {
-    const text = String(args ?? '').trim()
+    let text = String(args ?? '').trim()
     if (!this.memory) return 'Память недоступна.'
     if (text === '') return 'Напишите факт: /remember живёт в Москве.'
-    const fact = await this.memory.add(text, { source: 'owner' })
-    if (!fact) return `Уже помню: «${text}».`
-    return `🧠 Запомнил: «${fact.text}» (всего ${this.memory.size}).`
+    let kind = 'preference'
+    let validUntil
+    const until = text.match(/--until\s+(\d{4}-\d{2}-\d{2})/)
+    if (until) {
+      const end = new Date(`${until[1]}T23:59:59`)
+      if (Number.isNaN(end.getTime())) return 'Дата --until должна быть вида YYYY-MM-DD.'
+      validUntil = end.getTime()
+      text = text.replace(until[0], '').trim()
+    }
+    const kindMatch = text.match(/--kind\s+(temporary|preference|task)/)
+    if (kindMatch) {
+      kind = kindMatch[1]
+      text = text.replace(kindMatch[0], '').trim()
+    }
+    if (text === '') return 'Напишите факт: /remember живёт в Москве.'
+    const fact = await this.memory.add(text, { source: 'owner', kind, validUntil })
+    if (!fact) return `Уже помню: «${text}» (или факт отклонён как секрет).`
+    return `🧠 Запомнил: «${fact.text}» (всего ${this.memory.size})${validUntil ? ', временно' : ''}.`
   }
 
   /** Drop a fact by its number or a fragment of its text. */
@@ -1575,6 +1591,57 @@ export class AgentBot {
       default:
         return ['Процедуры: /procedure list | show <имя> | save <имя> <id> | edit <имя> <id> | set <имя> <поле> <значение> | activate <имя> | run <имя> [ключ=значение] | remove <имя>.'].join('\n')
     }
+  }
+
+  // ─── память ──────────────────────────────────────────────────────────────
+
+  /** Что из памяти попадает в задачу: отобранные факты + факты ассистента на задачу. */
+  memoryForTask(job) {
+    const parts = []
+    const selected = this.memory?.renderForTask?.({
+      text: job.text,
+      scope: { type: 'chat', value: job.chatId },
+      budget: this.config.memory?.contextChars ?? 1500,
+    })
+    if (selected) parts.push(selected)
+    if (Array.isArray(job.facts) && job.facts.length > 0) {
+      parts.push('Факты, переданные ассистентом для этой задачи (не сохранять):')
+      for (const fact of job.facts.slice(0, 50)) {
+        const text = typeof fact === 'string' ? fact : fact?.text
+        if (text) parts.push(`- ${String(text).slice(0, 300)}`)
+      }
+    }
+    return parts.join('\n')
+  }
+
+  /** /memory, /memory history, /memory set, /memory purge. */
+  async memoryCommand(args = '') {
+    if (!this.memory) return 'Память недоступна.'
+    const text = String(args ?? '').trim()
+    const [sub, ...rest] = text.split(/\s+/)
+    const restText = rest.join(' ')
+    if ((sub ?? '').toLowerCase() === 'history') {
+      const subject = restText.trim() || undefined
+      const facts = this.memory.history(subject)
+      if (facts.length === 0) return 'Истории памяти пока нет.'
+      return [
+        subject ? `История по «${subject}»:` : 'История памяти:',
+        ...facts.map((fact) => `• [${fact.status}] ${fact.text} — ${new Date(fact.createdAt).toLocaleDateString('ru-RU')}${fact.source ? ` (${fact.source})` : ''}`),
+      ].join('\n')
+    }
+    if ((sub ?? '').toLowerCase() === 'set') {
+      const [subject, ...words] = restText.trim().split(/\s+/)
+      if (!subject || words.length === 0) return 'Формат: /memory set <предмет> <значение>.'
+      const fact = await this.memory.set({ subject, text: words.join(' '), source: 'owner', owner: 'owner' })
+      return fact
+        ? `🧠 Запомнил: «${fact.text}» (предмет ${subject}); прежнее значение осталось в истории.`
+        : 'Не сохранил: пустой факт, дубль или похоже на секрет.'
+    }
+    if ((sub ?? '').toLowerCase() === 'purge') {
+      const count = await this.memory.clear()
+      return `🧠 Память очищена: ${count}.`
+    }
+    return this.memoryText()
   }
 
   /** List the newest files in the workspace, with its total size. */
@@ -2247,7 +2314,7 @@ export class AgentBot {
       text: `${job.text}${revisionNote}`,
       files: intake.files,
       notes: intake.notes.map((note) => `проблема: ${note}`),
-      memory: this.memory?.render() ?? '',
+      memory: this.memoryForTask(job),
       plan: silentPlan,
       maxChars: this.config.workspace.maxTaskChars,
       variantsMode: job.variantsMode ?? this.config.dialogue.proposeVariants,
@@ -2745,12 +2812,14 @@ export class AgentBot {
       }))
       return
     }
+    const safeText = redactSecrets(text)
+    if (safeText !== text) this.logger?.warn('secret redacted from report', { taskId: job.id })
     await this.markStatus({
       chatId: job.chatId,
       statusMessageId,
       markdown: statusMarkdown({ result, taskId: job.id, limits: this.config.limits }),
     })
-    const sent = await this.safeSend(job.chatId, text, {
+    const sent = await this.safeSend(job.chatId, safeText, {
       replyToMessageId: this.jobReplyTo(job),
     })
     await this.delivery?.trackPersonal?.({ taskId: job.id, text, chatId: job.chatId, receipt: sent?.messageId })
