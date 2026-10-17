@@ -913,3 +913,24 @@ PLA-15. После — PLA-16 (процедуры) и PLA-17 (память). PLA
 с результатами (6.2), тесты расписания и версии, живые сценарии, слияние дельт и архив.
 Дальше — PLA-17 (управляемая память). PLA-14 ждёт изменения в `tenkrol/assistant`;
 PLA-15 — живых XLSX/код/исследование и закрытия.
+
+## 2026-10-17: PLA-17 — управляемая память (черновик этапа)
+
+Реализовано и задеплоено:
+- `storage/memory.mjs` схема v2: вид (`preference`/`temporary`/`task`), `subject`, `scope`,
+  `source`/`owner`, `validUntil`, статусы `active`/`superseded`/`expired`, история замен;
+  миграция v1 создаёт `memory.json.v1.bak`; замена по предмету, истечение срока, отбор в
+  задачу по области/релевантности/бюджету, секреты отклоняются и вырезаются;
+- `secrets/guard.mjs` — шаблоны ключей и `redactSecrets`;
+- core: `/memory`, `/memory history`, `/memory set`, `/memory purge`, `/remember --until/--kind`;
+  в промпт идут отобранные факты и `context.facts` ассистента; отчёт очищается от секретов;
+- config: `MEMORY_CONTEXT_CHARS`, `MEMORY_HISTORY_MAX`, `MEMORY_TASK_RETENTION_DAYS`,
+  `MEMORY_MAX_FACTS`, `MEMORY_SECRET_SCAN` (`.env.example`, README);
+- тесты: **389 зелёных** (+6: миграция, замена, срок, область задачи, секреты, команды).
+
+Живая миграция на Финляндии: `memory migrated to version 2 {"facts":2}`,
+`memory.json.v1.bak` создан, сервис active.
+
+Осталось до закрытия PLA-17: `memory_proposal` через контракт, скан старых фактов при
+миграции, очистка контекста задач по сроку, живая проверка замены факта и слияние дельт.
+После — доведение PLA-15/16 и закрытие; PLA-14 ждёт `tenkrol/assistant`.
