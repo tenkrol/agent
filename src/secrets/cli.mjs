@@ -17,7 +17,11 @@ const option = (name, fallback) => {
 const plainPath = path.resolve(root, option('in', 'secrets/agent.env'))
 const encryptedPath = path.resolve(root, option('out', 'secrets/agent.env.enc'))
 const passphrase = process.env.SECRETS_PASSPHRASE ?? ''
-const relative = (file) => path.relative(root, file)
+// Путь для человека: внутри проекта — относительный, снаружи — абсолютный.
+const relative = (file) => {
+  const rel = path.relative(root, file)
+  return rel.startsWith('..') ? file : rel
+}
 
 function fail(message, code = 1) {
   console.error(`secrets: ${message}`)
