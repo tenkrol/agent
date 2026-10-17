@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const DOMAINS = ['config', 'secrets', 'storage', 'integrations', 'execution', 'tools']
+const DOMAINS = ['config', 'secrets', 'storage', 'integrations', 'execution', 'tools', 'delivery']
 
 /** Индекс домена должен загружаться и что-то экспортировать. */
 test('индексы доменов загружаются и экспортируют API', async () => {

@@ -31,6 +31,7 @@ import { AlertState } from './alerts.mjs'
 import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, readiness, renderReport } from './observe.mjs'
 import { formatDiskSize, joinPath } from './integrations/yandex-disk.mjs'
 import { buildTaskPrompt, describeAttachmentIssues } from './execution/prompt.mjs'
+import { composeReportText, quickFooter, quickStatus, statusMarkdown } from './delivery/index.mjs'
 import { costOf, costOfDay, formatUsd } from './storage/pricing.mjs'
 import { needsExecutor } from './execution/quick.mjs'
 import { CronError, describeCron, nextRunAt, parseCron, parseScheduleAdd } from './schedule.mjs'
@@ -1187,10 +1188,10 @@ export class AgentBot {
       peak: cost.peak,
       finishedAt: this.now().getTime(),
     })
-    await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: `✅ Ответил сразу (${job.id}).` })
+    await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: quickStatus({ taskId: job.id }) })
     await this.safeSend(job.chatId, [
       quick.text,
-      `\n_⚡ ответил сразу, без запуска задачи: ${quick.usage.totalTokens.toLocaleString('ru-RU')} токенов, ≈${formatUsd(cost.usd)}. Нужна полноценная работа — /retry ${job.id}._`,
+      quickFooter({ tokens: quick.usage.totalTokens, usdText: formatUsd(cost.usd), taskId: job.id }),
     ].join('\n'), { replyToMessageId: this.jobReplyTo(job) })
     return { quick: true, text: quick.text }
   }
@@ -1805,57 +1806,34 @@ export class AgentBot {
 
   /** Answer text for the finished task. */
   async reportResult({ job, result, statusMessageId, diskPaths = [] }) {
-    const minutes = Math.max(1, Math.round(result.durationMs / 60000))
-    let header = ''
-    if (result.aborted) header = '⛔ Задача отменена.'
-    else if (result.stepsExceeded) {
-      header = `🛑 Остановил задачу: она превысила ${this.config.limits.taskMaxSteps} шагов. `
-        + 'Похоже, агент ушёл исследовать вместо того, чтобы сделать; задачу стоит сузить.'
-    }
-    else if (result.budgetExceeded) {
-      header = `🛑 Остановил задачу: расход превысил ${this.config.limits.taskTokenBudget.toLocaleString('ru-RU')} токенов. `
-        + 'Обычно это значит, что агент зациклился; задачу лучше переформулировать или разбить.'
-    }
-    else if (result.timedOut) header = `⌛ Превышен лимит времени (${Math.round(this.config.limits.taskTimeoutMs / 60000)} мин), выполнение остановлено.`
-    else if (!result.ok) header = `⚠️ Задача завершилась с кодом ${result.exitCode ?? '—'}.`
-
-    const answer = String(result.text ?? '').trim()
-    const parts = [header]
-    if (answer !== '') {
-      const capped = answer.length > this.config.workspace.maxAnswerChars
-        ? `${answer.slice(0, this.config.workspace.maxAnswerChars)}\n\n[…ответ обрезан]`
-        : answer
-      parts.push(capped)
-    } else if (!result.aborted) {
-      parts.push('Агент не вернул текст ответа.')
-    }
-    if (!result.ok && !result.aborted && result.stderr) {
-      parts.push(`\n_Диагностика:_\n\`\`\`\n${result.stderr.slice(-ERROR_TAIL_CHARS)}\n\`\`\``)
-    }
-    if (!result.aborted && !result.timedOut) {
-      const cost = costOf(result.usage, this.pricingOptions())
-      parts.push(`\n_${minutes} мин, шагов ${result.usage.steps}, токенов ${result.usage.totalTokens.toLocaleString('ru-RU')}, ≈${formatUsd(cost.usd)}._`)
-    }
-    // A single expensive task is worth saying out loud: it is either real work or
-    // a sign the formulation invites wandering.
-    const warnAt = this.config.limits.taskTokenWarn
-    if (warnAt > 0 && result.usage.totalTokens > warnAt && !result.aborted) {
-      const warnCost = costOf(result.usage, this.pricingOptions())
-      parts.push(`💰 Дорогая задача: ${result.usage.totalTokens.toLocaleString('ru-RU')} токенов за ${result.usage.steps} шаг(ов), ≈${formatUsd(warnCost.usd)}.`)
-    }
-
-    // В brief-режиме статуса нет, поэтому проблемы вложений и архив сообщаем здесь.
-    if (this.config.report.style === 'brief' && job.issue) parts.push(job.issue)
-    if (this.config.report.style === 'brief' && diskPaths.length > 0) {
-      parts.push(`📁 Файлы задачи ${job.id} лежат на Яндекс.Диске: ${diskPaths.join(', ')}`)
-    }
+    // Текст ответа собирает домен delivery: ядро передаёт только данные и числа.
+    const cost = costOf(result.usage, this.pricingOptions())
+    const usdText = formatUsd(cost.usd)
+    const text = composeReportText({
+      result,
+      job,
+      limits: this.config.limits,
+      reportStyle: this.config.report.style,
+      maxAnswerChars: this.config.workspace.maxAnswerChars,
+      errorTailChars: ERROR_TAIL_CHARS,
+      diskPaths,
+      usdText,
+      footer: result.aborted || result.timedOut
+        ? undefined
+        : {
+            minutes: Math.max(1, Math.round(result.durationMs / 60000)),
+            steps: result.usage.steps,
+            tokens: result.usage.totalTokens,
+            usdText,
+          },
+    })
 
     await this.markStatus({
       chatId: job.chatId,
       statusMessageId,
-      markdown: result.aborted || result.timedOut ? header : `✅ Задача ${job.id} выполнена.`,
+      markdown: statusMarkdown({ result, taskId: job.id, limits: this.config.limits }),
     })
-    await this.safeSend(job.chatId, parts.filter((part) => part !== '').join('\n\n'), {
+    await this.safeSend(job.chatId, text, {
       replyToMessageId: this.jobReplyTo(job),
     })
   }
