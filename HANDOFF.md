@@ -571,3 +571,15 @@ bearer-токен. Наружу порт не открыт, TLS не нужен.
 - Формат файлов не менялся; задеплоено, сервис active, задача через мост принята.
 - Дельта влита в `openspec/specs/storage/spec.md`, изменение в архиве.
 - Следующее в очереди — `extract-integrations`.
+
+## 2026-10-17: extract-integrations закрыт
+
+- Домен `src/integrations/`: `telegram.mjs` (клиент Bot API), `platform.mjs` (порт отправки),
+  `yandex-disk.mjs` (архив REST/WebDAV); публичный API — `src/integrations/index.mjs`.
+  Пути внутри домена подняты на уровень (`../format.mjs`), импорты в `src/` и `test/` обновлены.
+- Сторожевой тест: сеть (`fetch`, `node:http(s)`) только в домене; исключения до шага
+  `bot-link` — `bot.mjs` (mirrorToAssistant) и `bridge-http.mjs` (входящий приём).
+- Протоколы, адреса, таймауты, форматы запросов не менялись. Тестов 306.
+- Задеплоено, сервис active, задача через мост принята.
+- Дельта влита в `openspec/specs/integrations/spec.md`, изменение в архиве.
+- Следующее в очереди — `extract-execution`.
