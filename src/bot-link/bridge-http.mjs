@@ -344,11 +344,14 @@ export class BridgeServer {
       if (result.error === 'expired') return send(410, { ok: false, error: 'file expired' })
       return send(404, { ok: false, error: 'file not found' })
     }
-    const name = result.record.name.replace(/["\\\r\n]/g, '_')
+    const original = String(result.record.name ?? 'file')
+    // HTTP-заголовок только ASCII: кириллицу отдаём через filename* (RFC 5987).
+    const ascii = original.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_') || 'file'
+    const encoded = encodeURIComponent(original)
     response.writeHead(200, {
       'content-type': result.record.mime || 'application/octet-stream',
       'content-length': result.bytes.length,
-      'content-disposition': `attachment; filename="${name}"`,
+      'content-disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
     })
     response.end(result.bytes)
   }
