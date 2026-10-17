@@ -25,13 +25,18 @@ export function createModelClient({ baseUrl, apiKey, model, timeoutMs = 90_000, 
       })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(`модель ответила ${response.status}`)
+      const reported = payload?.usage
       return {
         text: String(payload?.choices?.[0]?.message?.content ?? ''),
-        usage: {
-          inputTokens: Number(payload?.usage?.prompt_tokens) || 0,
-          outputTokens: Number(payload?.usage?.completion_tokens) || 0,
-          totalTokens: Number(payload?.usage?.total_tokens) || 0,
-        },
+        // Нет usage в ответе — это неизвестно, а не ноль: иначе бюджет
+        // выглядит израсходованным частично и открывает лишние повторы.
+        usage: reported
+          ? {
+            inputTokens: Number(reported.prompt_tokens) || 0,
+            outputTokens: Number(reported.completion_tokens) || 0,
+            totalTokens: Number(reported.total_tokens) || 0,
+          }
+          : { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined, unknown: true },
       }
     },
   }

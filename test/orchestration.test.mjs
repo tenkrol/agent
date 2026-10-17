@@ -212,3 +212,17 @@ test('verification does not start after the token budget is exhausted', async ()
   assert.notEqual(outcome.status, STAGE.done)
   assert.equal(outcome.reason, 'budget')
 })
+
+test('verification receives the remaining budget snapshot', async () => {
+  let seen
+  const executor = { id: 'dsh', execute: async () => ({ ok: true, text: 'x', usage: usage(30) }) }
+  const orchestrator = createOrchestrator({
+    executors: [executor],
+    verifier: verifier(0),
+    limits: { tokenLimit: 100, maxSteps: 5 },
+    verify: async ({ budget }) => { seen = budget; return { status: 'passed', criteria: [] } },
+  })
+  await orchestrator.run({ job: { id: 't10' }, task: 'x', signal: new AbortController().signal })
+  assert.equal(seen.remaining.tokens, 70)
+  assert.equal(seen.remaining.steps, 4)
+})

@@ -43,6 +43,7 @@ import { redactSecrets } from '../secrets/guard.mjs'
 import { createOrchestrator } from '../orchestration/orchestrator.mjs'
 import { createBudget, minLimit } from '../orchestration/budget.mjs'
 import { createDshExecutor } from '../agents/dsh/index.mjs'
+import { createTaskLifecycle } from '../orchestration/lifecycle-manager.mjs'
 import { buildQuestionEvent, buildResultEvent } from '../bot-link/events.mjs'
 import { dayKey } from '../storage/usage.mjs'
 import {
@@ -180,11 +181,9 @@ export class AgentBot {
     this.mirror = mirror
     this.instructionsPath = instructionsPath
     this.now = now
+    // Очередь, восстановление, awaiting и завершение принадлежат lifecycle.
+    this.lifecycle = createTaskLifecycle({ journal, stateStore: state, now: () => this.now().getTime() })
 
-    /** @type {Array<object>} tasks waiting for the single worker. */
-    this.queue = []
-    /** @type {object|undefined} the task being executed right now. */
-    this.running = undefined
     /** @type {Map<string, number>} last "access denied" notice per chat. */
     this.deniedAt = new Map()
     this.pollController = undefined
@@ -194,6 +193,22 @@ export class AgentBot {
     this.lastScheduleAt = 0
     this.lastProgressAt = 0
     this.recovered = { pending: [], interrupted: [] }
+  }
+
+  get queue() {
+    return this.lifecycle.queue
+  }
+
+  set queue(value) {
+    this.lifecycle.queue = value
+  }
+
+  get running() {
+    return this.lifecycle.running
+  }
+
+  set running(value) {
+    this.lifecycle.running = value
   }
 
   /** Prepare directories, identity and the polling cursor. */
@@ -261,45 +276,19 @@ export class AgentBot {
    * появившиеся в рабочей папке после начала выполнения.
    */
   async recoverTasks() {
-    const interrupted = this.journal ? await this.journal.recover() : []
-    await this.actions?.recover?.()
-    const pending = this.journal ? this.journal.pending() : []
-    this.queue = pending.map((record) => this.recordToJob(record))
-    if (this.journal) {
-      for (const record of interrupted) {
-        try {
-          const files = await snapshot(this.config.workspace.dir)
-          const since = Number(record.startedAt ?? record.createdAt ?? 0)
-          const partialFiles = [...files.entries()]
-            .filter(([, meta]) => (meta.mtimeMs ?? 0) >= since)
-            .map(([relPath]) => relPath)
-            .slice(0, 20)
-          await this.journal.update(record.id, { partialFiles })
-        } catch (error) {
-          this.logger?.debug?.('interrupted files scan failed', { error, taskId: record.id })
-        }
-      }
-    }
-    // Вопрос, открытый до перезапуска, восстанавливается из журнала: state.json
-    // мог не успеть сохраниться, а задача всё ещё ждёт владельца.
-    for (const record of this.journal?.awaiting() ?? []) {
-      const key = `await:${record.chatId}`
-      if (this.state.get(key)) continue
-      this.state.set(key, {
-        taskId: record.id,
-        askedAt: record.askedAt ?? record.updatedAt ?? this.now().getTime(),
-        kind: Array.isArray(record.variants) && record.variants.length > 0 ? 'variant' : 'question',
-        question: record.question,
-        variants: record.variants,
-        sessionId: record.sessionId,
-        brief: record.brief,
+    const recovered = await this.lifecycle.recover({
+      actions: this.actions,
+      recordToJob: (record) => this.recordToJob(record),
+      snapshot: () => snapshot(this.config.workspace.dir),
+      workspaceDir: this.config.workspace.dir,
+    })
+    if (recovered.pending.length > 0 || recovered.interrupted.length > 0) {
+      this.logger?.info('queue recovered', {
+        queued: recovered.pending.length,
+        interrupted: recovered.interrupted.length,
       })
     }
-    await this.state.flush()
-    if (pending.length > 0 || interrupted.length > 0) {
-      this.logger?.info('queue recovered', { queued: pending.length, interrupted: interrupted.length })
-    }
-    return { pending, interrupted }
+    return recovered
   }
 
   /** Собрать задание из записи журнала для повторного выполнения. */
@@ -508,19 +497,17 @@ export class AgentBot {
 
   /** The question a chat is currently expected to answer. */
   awaitingFor(chatId) {
-    return this.state.get(`await:${chatId}`)
+    return this.lifecycle.awaitingFor(chatId)
   }
 
   /** Remember that a chat owes an answer, and to which task. */
   async setAwaiting(chatId, payload) {
-    this.state.set(`await:${chatId}`, { askedAt: this.now().getTime(), ...payload })
-    await this.state.flush()
+    await this.lifecycle.setAwaiting(chatId, payload)
   }
 
   /** Forget the open question of a chat. */
   async clearAwaiting(chatId) {
-    this.state.delete(`await:${chatId}`)
-    await this.state.flush()
+    await this.lifecycle.clearAwaiting(chatId)
   }
 
   /** True when a question has been waiting longer than configured. */
@@ -548,7 +535,7 @@ export class AgentBot {
 
   /** Mark one awaiting task as expired and forget it. */
   async expireAwaiting(chatId, awaiting) {
-    await this.journal?.update(awaiting.taskId, {
+    await this.lifecycle.update(awaiting.taskId, {
       status: STATUS.cancelled,
       reason: 'expired',
       error: 'ответа не дождался',
@@ -626,7 +613,7 @@ export class AgentBot {
 
     if (action === 'x') {
       await this.clearAwaiting(chatId)
-      await this.journal?.update(taskId, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено пользователем' })
+      await this.lifecycle.update(taskId, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено пользователем' })
       await this.safeAnswerCallback({ callbackId, text: 'Отменено' })
       await this.dropKeyboard({ chatId, messageId, markdown: `${update.callback.text}\n\n⛔ Отменено.` })
       return
@@ -996,7 +983,7 @@ export class AgentBot {
     }
     if (uploaded.length === 0) return []
 
-    await this.journal?.update(job.id, { disk: uploaded.map((item) => item.remote) })
+    await this.lifecycle.update(job.id, { disk: uploaded.map((item) => item.remote) })
     if (silent) {
       // Пути попадут в единственный итоговый отчёт, отдельного сообщения не нужно.
       this.logger?.info('deliverables stored on disk', { taskId: job.id, count: uploaded.length, folder })
@@ -1258,7 +1245,7 @@ export class AgentBot {
       return undefined
     }
 
-    await this.journal?.update(job.id, {
+    await this.lifecycle.update(job.id, {
       status: STATUS.awaiting,
       plan: drafted.plan.slice(0, 2000),
       askedAt: this.now().getTime(),
@@ -1382,7 +1369,7 @@ export class AgentBot {
     const cancelled = [STATUS.cancelled, STATUS.interrupted].includes(outcome?.status)
     const budgetBlocked = ['budget', 'unknown_budget'].includes(outcome?.reason)
     if (cancelled || budgetBlocked) {
-      await this.journal?.close(job.id, { status: outcome.status, reason: outcome.reason, quick: true })
+      await this.lifecycle.close(job.id, { status: outcome.status, reason: outcome.reason, quick: true })
       return { quick: true, cancelled, budgetBlocked, text: quick?.text ?? '' }
     }
     if (!quick || quick.routed !== 'quick') return { fallback: true }
@@ -1391,7 +1378,7 @@ export class AgentBot {
     const status = outcome.status === STATUS.cancelled || outcome.status === STATUS.interrupted
       ? outcome.status
       : outcome.status
-    await this.journal?.close(job.id, {
+    await this.lifecycle.close(job.id, {
       status,
       reason: outcome.reason,
       quick: true,
@@ -1412,7 +1399,7 @@ export class AgentBot {
     }
     if (job.route) {
       const text = String(quick.text ?? '').trim()
-      await this.journal?.update(job.id, { resultSummary: { text, files: [], version: job.resultVersion ?? 1 } })
+      await this.lifecycle.update(job.id, { resultSummary: { text, files: [], version: job.resultVersion ?? 1 } })
       await this.delivery?.enqueue(buildResultEvent({
         task: { ...job, route: job.route },
         text,
@@ -1438,7 +1425,7 @@ export class AgentBot {
     const awaiting = this.awaitingFor(chatId)
     if (awaiting) {
       await this.clearAwaiting(chatId)
-      await this.journal?.update(awaiting.taskId, {
+      await this.lifecycle.update(awaiting.taskId, {
         status: STATUS.cancelled,
         reason: 'cancelled',
         error: 'отменено пользователем',
@@ -1459,22 +1446,13 @@ export class AgentBot {
 
   /** Отменить все задачи, которые ещё стоят в очереди, не теряя их из журнала. */
   async clearQueue(reason) {
-    const queued = [...this.queue]
-    this.queue = []
-    for (const job of queued) {
-      try {
-        await this.journal?.transition(job.id, STATUS.cancelled, { reason: 'cancelled', patch: { error: reason } })
-      } catch (error) {
-        this.logger?.warn('queued task cancel failed', { taskId: job.id, error })
-      }
-    }
-    return queued.length
+    return this.lifecycle.clearQueue(reason)
   }
 
   /** Закрыть задачу ошибкой, не падая на недопустимом переходе. */
   async failTask(id, { reason = 'internal', error, status = STATUS.failed } = {}) {
     try {
-      await this.journal?.update(id, { status, reason, error })
+      await this.lifecycle.update(id, { status, reason, error })
     } catch (cause) {
       this.logger?.warn('task status update failed', { taskId: id, error: cause })
     }
@@ -2299,17 +2277,15 @@ export class AgentBot {
   /** Run queued tasks one by one. */
 
   async drain() {
-    if (this.stopping) return
-    while (this.queue.length > 0 && !this.stopping) {
-      const job = this.queue.shift()
-      try {
-        await this.executeTask(job)
-      } catch (error) {
+    return this.lifecycle.drain({
+      runTask: (job) => this.executeTask(job),
+      isStopping: () => this.stopping,
+      onError: async (job, error) => {
         this.logger?.error('task execution failed', { taskId: job.id, error })
         await this.failTask(job.id, { reason: 'internal', error: String(error?.message ?? error).slice(0, 300) })
         await this.safeSend(job.chatId, `Внутренняя ошибка при выполнении задачи ${job.id}: ${String(error?.message ?? error).slice(0, 300)}`)
-      }
-    }
+      },
+    })
   }
 
   // ─── one task ─────────────────────────────────────────────────────────────
@@ -2456,7 +2432,7 @@ export class AgentBot {
     // Существенная неоднозначность формата: один вопрос до выполнения.
     if (this.verifier?.ambiguous?.({ taskText: job.text })) {
       const question = this.verifier.clarify?.() ?? 'Уточните формат результата.'
-      await this.journal?.update(job.id, {
+      await this.lifecycle.update(job.id, {
         status: STATUS.awaiting_owner,
         reason: 'question',
         question,
@@ -2546,6 +2522,7 @@ export class AgentBot {
         task,
         sessionId,
         signal: controller.signal,
+        budget: attemptBudget,
         stopping: this.stopping,
         onStage: (stage) => {
           if (this.running?.id === job.id) this.running.stage = stage
@@ -2567,7 +2544,7 @@ export class AgentBot {
             this.running.stage = info?.stage ?? this.running.stage
           }
         },
-        verify: async ({ result: runResult, signal }) => {
+        verify: async ({ result: runResult, signal, budget }) => {
           const afterRun = await snapshot(dir)
           outputs = await collectOutputs({
             before,
@@ -2593,6 +2570,7 @@ export class AgentBot {
               answer: runResult.text,
               root: dir,
               signal,
+              budget,
             })
           } catch (error) {
             value = { status: 'unavailable', criteria: [], limitations: [String(error?.message ?? error)], checkedAt: this.now().getTime() }
@@ -2665,7 +2643,7 @@ export class AgentBot {
     await this.ingestMemory({ job, dir })
 
     const cost = costOf(spent, this.pricingOptions())
-    await this.journal?.update(job.id, {
+    await this.lifecycle.update(job.id, {
       verification,
       durationMs: this.now().getTime() - startedAt,
       steps: spent.steps,
@@ -2698,7 +2676,7 @@ export class AgentBot {
     }
 
     const stoppedByShutdown = statusKind === STATUS.interrupted
-    await this.journal?.close(job.id, {
+    await this.lifecycle.close(job.id, {
       status: statusKind,
       verification,
       reason,
@@ -2726,7 +2704,7 @@ export class AgentBot {
   /** Park a task that asked a question, and send the question. */
   async parkForAnswer({ job, result, reply, statusMessageId, outputs }) {
     const sessionId = result.sessionId ?? job.sessionId
-    await this.journal?.update(job.id, {
+    await this.lifecycle.update(job.id, {
       status: STATUS.awaiting_owner,
       reason: 'question',
       question: reply.question,
@@ -2778,7 +2756,7 @@ export class AgentBot {
   /** Park a task that offered variants, and send them as buttons. */
   async parkForVariants({ job, result, reply, statusMessageId, outputs }) {
     const sessionId = result.sessionId ?? job.sessionId
-    await this.journal?.update(job.id, {
+    await this.lifecycle.update(job.id, {
       status: STATUS.awaiting_owner,
       reason: 'variants',
       variants: reply.variants,
@@ -2900,9 +2878,9 @@ export class AgentBot {
 
     if (job.route) {
       const summary = { text: String(result.text ?? '').trim(), files: resultFiles, version: job.resultVersion ?? 1 }
-      await this.journal?.update(job.id, { resultSummary: summary, resultFiles })
+      await this.lifecycle.update(job.id, { resultSummary: summary, resultFiles })
       if (result.aborted || result.timedOut) return
-      await this.journal?.update(job.id, { resultSummary: summary, resultFiles })
+      await this.lifecycle.update(job.id, { resultSummary: summary, resultFiles })
       await this.delivery?.enqueue(buildResultEvent({
         task: { ...job, route: job.route },
         text,

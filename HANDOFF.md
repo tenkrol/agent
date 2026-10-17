@@ -1105,3 +1105,22 @@ PLA-14: агентская часть (контракт v2, события, `ack
 - **Не закрыто:** перенос владельца JSONL-очереди, восстановления, ожидания ответа и
   терминальных переходов в orchestration (пункт 7.5). Это отдельное изменение до PLA-20;
   текущее изменение не считается полным завершением этого требования.
+
+## 2026-10-18: PLA-22 — завершение этапа 1 на JSONL (без PLA-20)
+
+Ветка `pla-22-lifecycle-owner` поверх опубликованного PLA-21 (`2ff0245`).
+
+- `src/orchestration/lifecycle-manager.mjs`: владеет очередью, текущей попыткой,
+  восстановлением из журнала, awaiting и терминальными переходами (`close/update/
+  transition`); `drain` — единый цикл очереди.
+- `AgentBot.queue/running` — геттеры/сеттеры к lifecycle; `recoverTasks`, `clearQueue`,
+  `drain`, awaiting-методы делегируют lifecycle; `journal.close` заменён на
+  `lifecycle.close`, `journal.update` на `lifecycle.update`.
+- Формат JSONL/state.json не менялся; PLA-20/SQLite/параллельные workers не начинались.
+- Дополнительно по ревью 2ff0245: DSH-запуск получает `budget: attemptBudget`;
+  `verifier.evaluate` получает бюджет; `maxTokens` проверки — остаток; при отсутствии
+  usage модели ставится `unknown`, а не 0; перед первым `executor.execute` проверяется
+  исчерпание бюджета; регрессионные тесты проверяют реальный `runner` (quick 10 при
+  лимите 100 → DSH получает 90; exhausted fallback → runner не вызван) и реальный
+  `modelClient` (HTTP без usage → unknown).
+- Тесты: **423 зелёных** (+10 к 413). Merge и установка не выполнялись.

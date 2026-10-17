@@ -75,6 +75,19 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
       }
     }
 
+    if (budget.exhausted()) {
+      stage(STAGE.failed, { reason: 'бюджет исчерпан до запуска' })
+      return {
+        result: { ok: false, usage: EMPTY_USAGE(), aborted: false },
+        verification: undefined,
+        budget: budget.snapshot(),
+        attempts: 0,
+        status: STAGE.failed,
+        reason: 'budget',
+        stages,
+        startedAt,
+      }
+    }
     stage(STAGE.executing)
     let result
     try {

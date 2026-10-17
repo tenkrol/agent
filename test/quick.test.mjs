@@ -239,10 +239,12 @@ test('a cancelled quick route that answers routed:dsh does not start DSH', async
 })
 
 test('quick routing and DSH share one budget instead of starting a new one', async () => {
+  const requests = []
   const env = await createBotHarness({
-    configEnv: { PLAN_MODE: 'never' },
+    configEnv: { PLAN_MODE: 'never', TASK_TOKEN_BUDGET: '100' },
     runner: {
-      async run() {
+      async run(request) {
+        requests.push(request)
         return { ok: true, exitCode: 0, timedOut: false, aborted: false, text: 'готово', sessionId: 's', usage: { inputTokens: 5, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 20, steps: 1 }, tools: [], errors: [], stderr: '', durationMs: 10 }
       },
     },
@@ -262,6 +264,34 @@ test('quick routing and DSH share one budget instead of starting a new one', asy
     const record = env.journal.recent(1)[0]
     assert.equal(record.status, 'done')
     assert.equal(record.tokens.total, 30, 'учтены и маршрутизация, и DSH')
+    assert.equal(requests[0].tokenBudget, 90, 'DSH получает остаток общего бюджета')
+  } finally {
+    await env.close()
+  }
+})
+
+test('an exhausted quick route never starts DSH', async () => {
+  let runs = 0
+  const env = await createBotHarness({
+    configEnv: { PLAN_MODE: 'never', TASK_TOKEN_BUDGET: '100' },
+    runner: { async run() { runs += 1; return { ok: true, text: 'x', usage: { totalTokens: 5, steps: 1 } } } },
+  })
+  try {
+    env.bot.quick = {
+      enabled: true,
+      async answer() {
+        return { routed: 'dsh', text: '', usage: { inputTokens: 50, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 100 }, durationMs: 5 }
+      },
+    }
+    await env.bot.handleUpdate({
+      kind: 'message', id: 6, chat: { id: 42, type: 'private' }, from: { id: 42, name: 'В', isBot: false },
+      text: 'сколько будет 17 умножить на 24', attachments: [], addressed: true, messageId: 10,
+    })
+    await env.bot.worker
+    const record = env.journal.recent(1)[0]
+    assert.equal(runs, 0, 'DSH не запускается при исчерпанном бюджете')
+    assert.equal(record.status, 'failed')
+    assert.equal(record.reason, 'budget')
   } finally {
     await env.close()
   }
