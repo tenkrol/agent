@@ -40,6 +40,7 @@ JSONL в `/var/lib/agent`. Офисные файлы — LibreOffice. Депло
 2. этот файл;
 3. `openspec/conventions.md`;
 4. `openspec/specs/architecture/spec.md` — границы доменов и правила зависимостей;
-5. активные `openspec/changes/PLA-<номер>/` — что в работе (следующий свободный номер —
-   `PLA-13`; закрытые — в `changes/archive/`);
+5. активные `openspec/changes/PLA-<номер>/` — что в работе (на 2026-10-17 активны
+   `PLA-13 … PLA-17`, следующий свободный номер — `PLA-18`; закрытые — в
+   `changes/archive/`);
 6. `HANDOFF.md` — состояние на сейчас.
