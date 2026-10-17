@@ -152,7 +152,7 @@ export function testConfig(dir, overrides = {}) {
  * @param {object} [options] - `runner`, `configEnv`, `vision`, `ocr`.
  * @returns {Promise<object>} the environment, with `close()` to clean up.
  */
-export async function createBotHarness({ runner = createStubRunner(), configEnv = {}, vision, ocr, now } = {}) {
+export async function createBotHarness({ runner = createStubRunner(), configEnv = {}, vision, ocr, now, mirror } = {}) {
   const dir = await tempDir()
   const config = testConfig(dir, configEnv)
   const platform = createStubPlatform()
@@ -176,7 +176,7 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
     logger,
   })
   const memory = await new MemoryStore({ file: path.join(config.workspace.stateDir, 'memory.json'), logger }).load()
-  const bot = new AgentBot({ config, platform, runner, usage, state, journal, schedules, vision, ocr, memory, logger, now })
+  const bot = new AgentBot({ config, platform, runner, usage, state, journal, schedules, vision, ocr, memory, logger, now, mirror })
   await bot.start()
   return {
     dir,

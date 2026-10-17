@@ -116,7 +116,7 @@ export class AgentBot {
    * @param {string} [options.instructionsPath] - `AGENTS.md` template to install.
    * @param {() => Date} [options.now] - clock, injected by tests.
    */
-  constructor({ config, platform, runner, usage, state, journal, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, now = () => new Date() }) {
+  constructor({ config, platform, runner, usage, state, journal, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
     this.config = config
     this.platform = platform
     this.runner = runner
@@ -132,6 +132,7 @@ export class AgentBot {
     this.memory = memory
     this.disk = disk
     this.logger = logger
+    this.mirror = mirror
     this.instructionsPath = instructionsPath
     this.now = now
 
@@ -1194,6 +1195,7 @@ export class AgentBot {
       quick.text,
       quickFooter({ tokens: quick.usage.totalTokens, usdText: formatUsd(cost.usd), taskId: job.id }),
     ].join('\n'), { replyToMessageId: this.jobReplyTo(job) })
+    void this.mirrorResult(quick.text)
     return { quick: true, text: quick.text }
   }
 
@@ -1720,13 +1722,15 @@ export class AgentBot {
     // Files are sent before the question, so the question stays the last message.
     await this.sendOutputs({ job, outputs })
     const hours = Math.max(1, Math.round(this.config.dialogue.awaitReplyMs / 3600000))
-    await this.safeSend(job.chatId, [
+    const questionText = [
       reply.answer === '' ? '' : reply.answer,
       `❓ Вопрос по задаче ${job.id}:`,
       reply.question,
       '',
       `_Ответьте сообщением. Отменить — /cancel. Ответ жду до ${hours} ч._`,
-    ].filter((part) => part !== '').join('\n'), { replyToMessageId: this.jobReplyTo(job) })
+    ].filter((part) => part !== '').join('\n')
+    await this.safeSend(job.chatId, questionText, { replyToMessageId: this.jobReplyTo(job) })
+    void this.mirrorResult(questionText)
     this.logger?.info('task awaits an answer', { taskId: job.id, questionChars: reply.question.length })
   }
 
@@ -1765,6 +1769,7 @@ export class AgentBot {
       keyboard: this.variantsKeyboard(job.id, reply.variants),
       replyToMessageId: this.jobReplyTo(job),
     })
+    void this.mirrorResult(body)
     if (sent?.messageId !== undefined) {
       const awaiting = this.awaitingFor(job.chatId)
       if (awaiting) await this.setAwaiting(job.chatId, { ...awaiting, messageId: sent.messageId })
@@ -1837,6 +1842,7 @@ export class AgentBot {
     await this.safeSend(job.chatId, text, {
       replyToMessageId: this.jobReplyTo(job),
     })
+    void this.mirrorResult(text)
   }
 
   /**
@@ -1955,12 +1961,26 @@ export class AgentBot {
     if (!markdown) return undefined
     try {
       const sent = await this.platform.sendText({ chatId, markdown, keyboard, replyToMessageId })
-      // Дублируем ответ в чат-бот: владелец ведёт диалог там, и его ответ продолжает ту же беседу.
-      void mirrorToAssistant(markdown, this.config, { logger: this.logger }).catch(() => {})
       return sent
     } catch (error) {
       this.logger?.error('sendMessage failed', { chatId, error })
       return undefined
+    }
+  }
+
+  /**
+   * Дублировать в чат-бота ТОЛЬКО результат работы или запрос информации.
+   *
+   * Служебные сообщения (статусы, прогресс, отметки, сводки, алерты) зеркалировать нельзя:
+   * владелец получал поток вместо результата. Ошибка зеркалирования на доставку не влияет.
+   */
+  async mirrorResult(markdown) {
+    const text = String(markdown ?? '').trim()
+    if (text === '') return
+    try {
+      await this.mirror(text, this.config, { logger: this.logger })
+    } catch (error) {
+      this.logger?.debug?.('mirror failed', { error })
     }
   }
 
