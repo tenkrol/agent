@@ -102,6 +102,7 @@ const COMMANDS = [
   ['/resume', 'снять остановку автономии'],
   ['/remember', 'добавить факт в память: /remember текст'],
   ['/schedule', 'расписания: /schedule add "0 9 * * 1-5" задача'],
+  ['/procedure', 'личные процедуры: /procedure list|show|save|set|activate|run'],
   ['/files', 'последние файлы в рабочей папке'],
 ]
 
@@ -120,7 +121,7 @@ export class AgentBot {
    * @param {string} [options.instructionsPath] - `AGENTS.md` template to install.
    * @param {() => Date} [options.now] - clock, injected by tests.
    */
-  constructor({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, verifier, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
+  constructor({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
     this.config = config
     this.platform = platform
     this.runner = runner
@@ -132,6 +133,7 @@ export class AgentBot {
     this.requests = requests
     this.files = files
     this.verifier = verifier
+    this.procedures = procedures
     this.schedules = schedules
     this.vision = vision
     this.ocr = ocr
@@ -674,6 +676,9 @@ export class AgentBot {
         return
       case '/schedule':
         await this.safeSend(chatId, await this.scheduleCommand({ args, update }))
+        return
+      case '/procedure':
+        await this.safeSend(chatId, await this.procedureCommand({ args }))
         return
       case '/files':
         await this.safeSend(chatId, await this.filesText())
@@ -1451,6 +1456,127 @@ export class AgentBot {
     return `▶️ Продолжаю задачу ${id} с сохранённого места.`
   }
 
+  // ─── личные процедуры ────────────────────────────────────────────────────
+
+  /** Разобрать «procedure:<name> key=value …» из расписания. */
+  parseProcedureTask(text) {
+    const match = String(text ?? '').match(/^procedure:([^\s]+)(?:\s+([\s\S]*))?$/)
+    if (!match) return undefined
+    return { name: match[1], params: this.parseParams(match[2] ?? '') }
+  }
+
+  /** Параметры вида key=value. */
+  parseParams(text) {
+    const params = {}
+    for (const part of String(text ?? '').trim().split(/\s+/).filter(Boolean)) {
+      const index = part.indexOf('=')
+      if (index > 0) params[part.slice(0, index)] = part.slice(index + 1)
+    }
+    return params
+  }
+
+  /** Сохранить/показать/запустить процедуру. */
+  async procedureCommand({ args } = {}) {
+    if (!this.procedures) return 'Процедуры недоступны.'
+    const text = String(args ?? '').trim()
+    const [sub, ...rest] = text.split(/\s+/)
+    const restText = rest.join(' ')
+    const list = this.procedures.list()
+    const format = (record) => {
+      const active = record.versions.find((version) => version.version === record.activeVersion)
+      const draft = record.versions.find((version) => version.status === 'draft')
+      const state = active ? `v${active.version}` : draft ? `черновик v${draft.version}` : 'нет версии'
+      return `• ${record.name} — ${state}`
+    }
+    switch ((sub ?? '').toLowerCase()) {
+      case '':
+      case 'list':
+        if (list.length === 0) return 'Процедур пока нет. Сохранить: /procedure save <имя> <id задачи>.'
+        return ['Личные процедуры:', ...list.map(format), '', 'Подробнее: /procedure show <имя>.'].join('\n')
+      case 'show': {
+        const record = this.procedures.get(restText.trim())
+        if (!record) return `Процедура «${restText.trim()}» не найдена.`
+        const lines = [`Процедура «${record.name}» (${record.id}):`]
+        for (const version of record.versions) {
+          const active = version.version === record.activeVersion ? ' ← активная' : ''
+          lines.push(`  v${version.version} [${version.status}]${active}: ${version.purpose || '—'}`)
+        }
+        const draft = record.versions.find((version) => version.status === 'draft')
+        if (draft) {
+          const missing = this.procedures.missingFields(draft)
+          if (missing.length > 0) lines.push(`  черновику не хватает: ${missing.join(', ')}`)
+        }
+        return lines.join('\n')
+      }
+      case 'save':
+      case 'edit': {
+        const [name, taskId] = restText.trim().split(/\s+/)
+        if (!name || !taskId) return `Формат: /procedure ${sub} <имя> <id задачи>.`
+        const record = this.journal?.get(taskId)
+        if (!record) return `Задача ${taskId} не найдена.`
+        const criteria = this.verifier?.criteriaFor?.({ taskText: record.request ?? record.text ?? '', files: [] }) ?? []
+        try {
+          const result = sub === 'save'
+            ? await this.procedures.saveFromTask({ name, record, criteria })
+            : await this.procedures.editFromTask({ name, record, criteria })
+          const version = result.version
+          return version.status === 'active'
+            ? `Процедура «${name}» сохранена и активна (v${version.version}). Запуск: /procedure run ${name}.`
+            : `Процедура «${name}» сохранена черновиком v${version.version}; не хватает: ${result.missing.join(', ')}. Дозаполните /procedure set и активируйте.`
+        } catch (error) {
+          return `Не сохранил процедуру: ${String(error?.message ?? error)}`
+        }
+      }
+      case 'set': {
+        const [name, field] = restText.trim().split(/\s+/)
+        const value = restText.trim().slice(String(name ?? '').length + String(field ?? '').length + 2)
+        if (!name || !field || value === '') return 'Формат: /procedure set <имя> <поле> <значение>.'
+        try {
+          const result = await this.procedures.setField(name, field, value)
+          return result.missing.length === 0
+            ? `Поле «${field}» заполнено; активируйте: /procedure activate ${name}.`
+            : `Поле «${field}» заполнено; ещё не хватает: ${result.missing.join(', ')}.`
+        } catch (error) {
+          return `Не изменил процедуру: ${String(error?.message ?? error)}`
+        }
+      }
+      case 'activate': {
+        const name = restText.trim()
+        try {
+          const result = await this.procedures.activate(name)
+          return `Процедура «${name}» активна: v${result.version.version}. Запуск: /procedure run ${name}.`
+        } catch (error) {
+          return `Не активировал: ${String(error?.message ?? error)}`
+        }
+      }
+      case 'run': {
+        const [name, ...paramParts] = restText.trim().split(/\s+/)
+        if (!name) return 'Формат: /procedure run <имя> [ключ=значение …].'
+        const rendered = this.procedures.render({ name, params: this.parseParams(paramParts.join(' ')) })
+        if (!rendered.ok) return `Не запускаю: ${rendered.error}`
+        const outcome = await this.enqueueJob({
+          id: this.journal ? this.journal.nextId(this.now()) : `proc-${this.now().getTime().toString(36)}`,
+          chatId: this.alertChatId(),
+          userId: this.alertChatId(),
+          text: rendered.text,
+          attachments: [],
+          brief: `🧩 ${name} v${rendered.version}`,
+          procedure: { id: rendered.procedure.id, name, version: rendered.version, params: this.parseParams(paramParts.join(' ')) },
+          variantsMode: 'never',
+          freshSession: true,
+          forceDsh: true,
+        })
+        return outcome?.queued ? `🧩 Запускаю процедуру «${name}» v${rendered.version}.` : `Не запустил: ${outcome?.reason ?? 'очередь недоступна'}`
+      }
+      case 'remove': {
+        const name = restText.trim()
+        return (await this.procedures.remove(name)) ? `Процедура «${name}» удалена.` : `Процедура «${name}» не найдена.`
+      }
+      default:
+        return ['Процедуры: /procedure list | show <имя> | save <имя> <id> | edit <имя> <id> | set <имя> <поле> <значение> | activate <имя> | run <имя> [ключ=значение] | remove <имя>.'].join('\n')
+    }
+  }
+
   /** List the newest files in the workspace, with its total size. */
   async filesText() {
     const { dir } = this.config.workspace
@@ -1505,13 +1631,29 @@ export class AgentBot {
         missed: (record.missed ?? 0) + (reallyMissed ? 1 : 0),
       })
       this.logger?.info('schedule fired', { schedule: record.id, cron: record.cron, lateMinutes })
+      let taskText = record.task
+      let procedure
+      if (record.procedureId || /^procedure:/.test(record.task)) {
+        const parsed = record.procedureId
+          ? { name: record.procedureId, params: record.procedureParams ?? {} }
+          : this.parseProcedureTask(record.task)
+        const rendered = parsed ? this.procedures?.render({ name: parsed.name, params: parsed.params ?? {} }) : undefined
+        if (!rendered?.ok) {
+          this.logger?.warn('schedule procedure unavailable', { schedule: record.id, error: rendered?.error })
+          await this.alert(`🕒 Расписание ${record.id} не запущено: ${rendered?.error ?? 'процедура недоступна'}`)
+          continue
+        }
+        taskText = rendered.text
+        procedure = { id: rendered.procedure.id, name: parsed.name, version: rendered.version, params: parsed.params ?? {} }
+      }
       await this.enqueueJob({
         id: this.journal ? this.journal.nextId(now) : `sched-${record.id}-${now.getTime().toString(36)}`,
         chatId: record.chatId,
         userId: record.userId,
-        text: record.task,
+        text: taskText,
         attachments: [],
-        brief: `🕒 ${record.task}`,
+        brief: procedure ? `🧩 ${procedure.name} v${procedure.version}` : `🕒 ${record.task}`,
+        procedure,
         scheduledFrom: record.id,
         // A recurring job runs unattended: asking "какой вариант?" every Monday
         // is noise, so scheduled runs never offer variants.
@@ -1546,6 +1688,16 @@ export class AgentBot {
         }
         try {
           const record = await this.schedules.add({ chatId: update.chat.id, userId: update.from?.id, cron: cronText, task })
+          const parsedProcedure = this.parseProcedureTask(task)
+          if (parsedProcedure) {
+            if (!this.procedures) return 'Процедуры недоступны.'
+            const rendered = this.procedures.render({ name: parsedProcedure.name, params: parsedProcedure.params })
+            if (!rendered.ok) {
+              await this.schedules.remove(record.id)
+              return `Расписание не создано: ${rendered.error}`
+            }
+            await this.schedules.update(record.id, { procedureId: parsedProcedure.name, procedureParams: parsedProcedure.params })
+          }
           const when = record.nextRunAt
             ? new Date(record.nextRunAt).toLocaleString('ru-RU', { timeZone: this.schedules.timeZone })
             : 'не удалось вычислить'
@@ -1576,13 +1728,22 @@ export class AgentBot {
         const id = restText.trim().split(/\s+/)[0]
         const record = this.schedules.get(id)
         if (!record) return `Расписание ${id} не найдено.`
+        let taskText = record.task
+        let procedure
+        if (record.procedureId) {
+          const rendered = this.procedures?.render({ name: record.procedureId, params: record.procedureParams ?? {} })
+          if (!rendered?.ok) return `Не запускаю: ${rendered?.error ?? 'процедура недоступна'}`
+          taskText = rendered.text
+          procedure = { id: rendered.procedure.id, name: record.procedureId, version: rendered.version, params: record.procedureParams ?? {} }
+        }
         await this.enqueueJob({
           id: this.journal ? this.journal.nextId(this.now()) : `sched-${record.id}-${this.now().getTime().toString(36)}`,
           chatId: record.chatId,
           userId: record.userId,
-          text: record.task,
+          text: taskText,
           attachments: [],
-          brief: `🕒 ${record.task}`,
+          brief: procedure ? `🧩 ${procedure.name} v${procedure.version}` : `🕒 ${record.task}`,
+          procedure,
           scheduledFrom: record.id,
           variantsMode: 'never',
         })

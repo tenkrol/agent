@@ -154,6 +154,10 @@ export function loadConfig(env = process.env) {
     files: {
       maxBytes: positiveInt(read(env, 'FILES_MAX_BYTES'), 'FILES_MAX_BYTES', { min: 1024, max: 500_000_000 }),
     },
+    procedures: {
+      maxVersions: positiveInt(read(env, 'PROCEDURES_MAX_VERSIONS'), 'PROCEDURES_MAX_VERSIONS', { min: 1, max: 200 }),
+      retentionDays: positiveInt(read(env, 'PROCEDURES_RETENTION_DAYS'), 'PROCEDURES_RETENTION_DAYS', { min: 1, max: 3650 }),
+    },
     verify: {
       enabled: boolean(read(env, 'VERIFY'), 'VERIFY'),
       maxAttempts: positiveInt(read(env, 'VERIFY_MAX_ATTEMPTS'), 'VERIFY_MAX_ATTEMPTS', { min: 0, max: 5, allowZero: true }),

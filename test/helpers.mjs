@@ -13,6 +13,8 @@ import { DeliveryStore } from '../src/storage/deliveries.mjs'
 import { RequestStore } from '../src/storage/requests.mjs'
 import { FileStore } from '../src/storage/files.mjs'
 import { DeliveryWorker } from '../src/bot-link/deliver.mjs'
+import { ProceduresStore } from '../src/storage/procedures.mjs'
+import { createProcedures } from '../src/procedures/index.mjs'
 import { MemoryStore } from '../src/storage/memory.mjs'
 import { loadConfig } from '../src/config/index.mjs'
 import { ScheduleStore } from '../src/core/schedule.mjs'
@@ -199,6 +201,19 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
     file: path.join(config.workspace.stateDir, 'requests.jsonl'),
     logger,
   }).load()
+  const proceduresStore = await new ProceduresStore({
+    file: path.join(config.workspace.stateDir, 'procedures.json'),
+    logger,
+    maxVersions: config.procedures.maxVersions,
+  }).load()
+  const procedures = createProcedures({
+    store: proceduresStore,
+    globalLimits: {
+      tokenBudget: config.limits.taskTokenBudget,
+      maxSteps: config.limits.taskMaxSteps,
+      timeoutMs: config.limits.taskTimeoutMs,
+    },
+  })
   const delivery = new DeliveryWorker({
     store: deliveries,
     platform,
@@ -212,7 +227,7 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
   })
   // Тест восстановления подкладывает готовый журнал до старта бота.
   if (seedJournal) await seedJournal({ journal, state, dir, config, path, actions })
-  const bot = new AgentBot({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, verifier, schedules, vision, ocr, memory, logger, now, mirror })
+  const bot = new AgentBot({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, memory, logger, now, mirror })
   await bot.start()
   return {
     dir,
@@ -227,6 +242,7 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
     deliveries,
     requests,
     files,
+    procedures,
     schedules,
     memory,
     bot,

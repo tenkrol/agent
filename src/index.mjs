@@ -33,6 +33,8 @@ import { verify, deriveCriteria, detectResultKind, isVerificationNeeded, disable
 import { inspectDocument, inspectSpreadsheet, recalcSpreadsheet, renderDocument } from './tools/verify.mjs'
 import { runCodeChecks } from './execution/checks.mjs'
 import { createModelClient } from './integrations/model.mjs'
+import { ProceduresStore } from './storage/procedures.mjs'
+import { createProcedures } from './procedures/index.mjs'
 import { createSynthesizer } from './tools/tts.mjs'
 import { UsageStore } from './storage/usage.mjs'
 import { VisionClient } from './tools/vision.mjs'
@@ -114,6 +116,19 @@ async function main() {
     maxEntries: 10_000,
   }).load()
   const requests = await new RequestStore({ file: path.join(stateDir, 'requests.jsonl'), logger }).load()
+  const proceduresStore = await new ProceduresStore({
+    file: path.join(stateDir, 'procedures.json'),
+    logger,
+    maxVersions: config.procedures.maxVersions,
+  }).load()
+  const procedures = createProcedures({
+    store: proceduresStore,
+    globalLimits: {
+      tokenBudget: config.limits.taskTokenBudget,
+      maxSteps: config.limits.taskMaxSteps,
+      timeoutMs: config.limits.taskTimeoutMs,
+    },
+  })
   const schedules = new ScheduleStore({
     file: path.join(stateDir, 'schedules.json'),
     timeZone: config.schedules.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -156,6 +171,7 @@ async function main() {
       files,
       criteria: deriveCriteria({ taskText, files }).criteria,
     }),
+    criteriaFor: ({ taskText, files }) => deriveCriteria({ taskText, files }).criteria,
     ambiguous: ({ taskText }) => {
       const derived = deriveCriteria({ taskText, files: [] })
       return derived.kind === 'none' && /файл|документ|отчёт|презентац|таблиц/i.test(String(taskText))
@@ -287,6 +303,7 @@ async function main() {
     requests,
     files,
     verifier,
+    procedures,
     schedules,
     vision: visionEnabled ? vision : undefined,
     ocr: ocrAvailable ? ocr : undefined,

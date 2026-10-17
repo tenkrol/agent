@@ -64,6 +64,10 @@ export const DEFAULTS = {
   VERIFY_RENDER: 'true',
   VERIFY_MODEL_MAX_CHARS: '12000',
   VERIFY_CHECK_ALLOWLIST: 'node --test;npm test;npm run lint;npm run build;pytest;go test;cargo test;make test',
+
+  // Личные процедуры (PLA-16).
+  PROCEDURES_MAX_VERSIONS: '20',
+  PROCEDURES_RETENTION_DAYS: '365',
   FILES_MAX_BYTES: '20971520',
 
   // Model: the key is forwarded to DSH as DEEPSEEK_API_KEY before each run.
