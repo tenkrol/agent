@@ -208,3 +208,61 @@ test('the quick answer goes through the orchestrator and cancellation closes it 
     await env.close()
   }
 })
+
+test('a cancelled quick route that answers routed:dsh does not start DSH', async () => {
+  const runs = []
+  const env = await createBotHarness({ runner: { async run() { runs.push(1); return {} } } })
+  try {
+    env.bot.quick = {
+      enabled: true,
+      async answer({ signal }) {
+        await new Promise((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', resolve, { once: true })
+        })
+        return { routed: 'dsh', text: '', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 2 }, durationMs: 5 }
+      },
+    }
+    const handled = env.bot.handleUpdate({
+      kind: 'message', id: 4, chat: { id: 42, type: 'private' }, from: { id: 42, name: 'В', isBot: false },
+      text: 'сколько будет 17 умножить на 24', attachments: [], addressed: true, messageId: 8,
+    })
+    while (!env.bot.running) await new Promise((resolve) => setTimeout(resolve, 5))
+    await env.bot.cancelAll(42)
+    await handled
+    await env.bot.worker
+    assert.equal(runs.length, 0, 'DSH не запускался после отмены быстрого маршрута')
+    assert.equal(env.journal.recent(1)[0].status, 'cancelled')
+  } finally {
+    await env.close()
+  }
+})
+
+test('quick routing and DSH share one budget instead of starting a new one', async () => {
+  const env = await createBotHarness({
+    configEnv: { PLAN_MODE: 'never' },
+    runner: {
+      async run() {
+        return { ok: true, exitCode: 0, timedOut: false, aborted: false, text: 'готово', sessionId: 's', usage: { inputTokens: 5, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 20, steps: 1 }, tools: [], errors: [], stderr: '', durationMs: 10 }
+      },
+    },
+  })
+  try {
+    env.bot.quick = {
+      enabled: true,
+      async answer() {
+        return { routed: 'dsh', text: '', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 10 }, durationMs: 5 }
+      },
+    }
+    await env.bot.handleUpdate({
+      kind: 'message', id: 5, chat: { id: 42, type: 'private' }, from: { id: 42, name: 'В', isBot: false },
+      text: 'сколько будет 17 умножить на 24', attachments: [], addressed: true, messageId: 9,
+    })
+    await env.bot.worker
+    const record = env.journal.recent(1)[0]
+    assert.equal(record.status, 'done')
+    assert.equal(record.tokens.total, 30, 'учтены и маршрутизация, и DSH')
+  } finally {
+    await env.close()
+  }
+})

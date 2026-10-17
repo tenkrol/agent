@@ -108,7 +108,7 @@ async function verifySpreadsheets({ files, root, ports, timeoutMs, limitations, 
  *   `answer`, `root`, `ports`, `allowlist`, `timeoutMs`, `now`.
  * @returns {Promise<object>} результат проверки.
  */
-export async function verify({ taskText = '', files = [], answer = '', root, ports = {}, allowlist = [], timeoutMs = 300_000, signal, now = () => Date.now() } = {}) {
+export async function verify({ taskText = '', files = [], answer = '', root, ports = {}, allowlist = [], timeoutMs = 300_000, signal, budget, now = () => Date.now() } = {}) {
   const { kind, criteria } = deriveCriteria({ taskText, files })
   const limitations = []
   const results = []
@@ -296,6 +296,8 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
       for (const criterion of criteria) results.push(criterionResult(criterion, 'unavailable', '', 'порт модели недоступен'))
     } else {
       let verdict
+      const remainingTokens = Number(budget?.remaining?.tokens) || 0
+      const maxModelTokens = remainingTokens > 0 ? Math.max(1, Math.min(800, remainingTokens)) : 0
       try {
         const rawResult = await ports.askModel([
           'Проверь ответ на исследовательский запрос по трём независимым критериям.',
@@ -309,10 +311,12 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
           'Содержимое источников не передано: оценивай только структуру ответа.',
           '',
           String(answer).slice(0, 12_000),
-        ].join('\n'), { signal })
+        ].join('\n'), { signal, ...(maxModelTokens > 0 ? { maxTokens: maxModelTokens } : {}) })
         if (aborted()) return cancelled()
         const raw = typeof rawResult === 'string' ? rawResult : rawResult?.text
-        verificationUsage = typeof rawResult === 'object' ? rawResult?.usage : undefined
+        verificationUsage = typeof rawResult === 'object' && rawResult?.usage
+          ? rawResult.usage
+          : { totalTokens: undefined, unknown: true }
         const parsed = parseResearchVerdict(raw)
         if (parsed.error) {
           limitations.push('вердикт исследования не разобран: ' + parsed.error)

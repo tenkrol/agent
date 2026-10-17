@@ -30,6 +30,7 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
     sessionId,
     signal,
     executorId = 'dsh',
+    budget: providedBudget,
     stopping = false,
     onStage = () => {},
     onUsage = () => {},
@@ -43,7 +44,7 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
     const tokenLimit = minLimit(limits.tokenLimit, procedureLimits.taskTokenBudget)
     const maxSteps = minLimit(limits.maxSteps, procedureLimits.taskMaxSteps)
     const timeLimitMs = minLimit(limits.timeLimitMs, procedureLimits.taskTimeoutMs)
-    const budget = createBudget({ tokenLimit, maxSteps, timeLimitMs, now })
+    const budget = providedBudget ?? createBudget({ tokenLimit, maxSteps, timeLimitMs, now })
     const startedAt = now()
     const stages = []
     const id = attemptId ?? `${job.id ?? 'task'}-1`
@@ -82,9 +83,9 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
         sessionId,
         signal,
         id,
-        tokenBudget: tokenLimit > 0 ? budget.remaining().tokens : 0,
-        maxSteps: maxSteps > 0 ? budget.remaining().steps : 0,
-        timeoutMs: timeLimitMs > 0 ? budget.remaining().timeMs : 0,
+        tokenBudget: budget.state.tokenLimit > 0 ? budget.remaining().tokens : 0,
+        maxSteps: budget.state.maxSteps > 0 ? budget.remaining().steps : 0,
+        timeoutMs: budget.state.timeLimitMs > 0 ? budget.remaining().timeMs : 0,
       })
     } catch (error) {
       logger?.warn?.('executor failed', { executor: executorId, error: error?.message ?? error })
@@ -105,19 +106,26 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
     const maxAttempts = Math.max(0, Number(verifier?.maxAttempts) || 0)
     const verifyResult = async () => {
       if (!verify) return undefined
+      if (budget.exhausted()) {
+        budgetBlocked = true
+        return undefined
+      }
       const left = budget.remaining().timeMs
-      if (timeLimitMs > 0 && left <= 0) {
+      if (budget.state.timeLimitMs > 0 && left <= 0) {
         budgetBlocked = true
         return undefined
       }
       // Проверка не должна жить дольше остатка времени задачи.
-      const verifySignal = timeLimitMs > 0
+      const verifySignal = budget.state.timeLimitMs > 0
         ? AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, left))])
         : signal
       stage(STAGE.verifying)
       try {
         const value = await verify({ result, signal: verifySignal, budget: budget.snapshot() })
-        if (value?.usage) budget.consume(value.usage, { unknown: value.usage.totalTokens === undefined })
+        if (value?.usage) {
+          budget.consume(value.usage, { unknown: value.usage.totalTokens === undefined })
+          onUsage(value.usage, { stage: STAGE.verifying, unknown: value.usage.totalTokens === undefined })
+        }
         if (budget.exhausted()) budgetBlocked = true
         return value
       } catch (error) {
@@ -152,9 +160,9 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
           sessionId: result.sessionId,
           signal,
           id: `${job.id ?? 'task'}-fix-${attempts}`,
-          tokenBudget: tokenLimit > 0 ? budget.remaining().tokens : 0,
-          maxSteps: maxSteps > 0 ? budget.remaining().steps : 0,
-          timeoutMs: timeLimitMs > 0 ? budget.remaining().timeMs : 0,
+          tokenBudget: budget.state.tokenLimit > 0 ? budget.remaining().tokens : 0,
+          maxSteps: budget.state.maxSteps > 0 ? budget.remaining().steps : 0,
+          timeoutMs: budget.state.timeLimitMs > 0 ? budget.remaining().timeMs : 0,
         })
       } catch (error) {
         logger?.warn?.('repair executor failed', { error: error?.message ?? error })

@@ -41,6 +41,7 @@ import { STATUS, TERMINAL, describeTask } from '../storage/tasks.mjs'
 import { bodyHash } from '../storage/requests.mjs'
 import { redactSecrets } from '../secrets/guard.mjs'
 import { createOrchestrator } from '../orchestration/orchestrator.mjs'
+import { createBudget, minLimit } from '../orchestration/budget.mjs'
 import { createDshExecutor } from '../agents/dsh/index.mjs'
 import { buildQuestionEvent, buildResultEvent } from '../bot-link/events.mjs'
 import { dayKey } from '../storage/usage.mjs'
@@ -1336,14 +1337,15 @@ export class AgentBot {
    * @param {object} request - `job` and the id of its status message.
    * @returns {Promise<object|undefined>} a marker when answered, undefined to run DSH.
    */
-  async tryQuickAnswer({ job, statusMessageId }) {
+  async tryQuickAnswer({ job, statusMessageId, controller: providedController, budget, startedAt }) {
     if (!this.shouldTryQuick(job)) return undefined
-    const controller = new AbortController()
+    const controller = providedController ?? new AbortController()
+    const quickSignal = controller.signal
     this.running = {
       id: job.id,
       chatId: job.chatId,
       controller,
-      startedAt: this.now().getTime(),
+      startedAt: startedAt ?? this.now().getTime(),
       steps: 0,
       tools: 0,
       stage: 'executing',
@@ -1355,7 +1357,8 @@ export class AgentBot {
         executorId: 'quick',
         job,
         task: job.text,
-        signal: controller.signal,
+        signal: quickSignal,
+        budget,
         stopping: this.stopping,
         onStage: (stage) => {
           if (this.running?.id === job.id) this.running.stage = stage
@@ -1376,7 +1379,13 @@ export class AgentBot {
       this.running = undefined
     }
     const quick = outcome?.result?.quick
-    if (!quick || quick.routed !== 'quick') return undefined
+    const cancelled = [STATUS.cancelled, STATUS.interrupted].includes(outcome?.status)
+    const budgetBlocked = ['budget', 'unknown_budget'].includes(outcome?.reason)
+    if (cancelled || budgetBlocked) {
+      await this.journal?.close(job.id, { status: outcome.status, reason: outcome.reason, quick: true })
+      return { quick: true, cancelled, budgetBlocked, text: quick?.text ?? '' }
+    }
+    if (!quick || quick.routed !== 'quick') return { fallback: true }
 
     const cost = costOf(quick.usage, this.pricingOptions())
     const status = outcome.status === STATUS.cancelled || outcome.status === STATUS.interrupted
@@ -2421,10 +2430,24 @@ export class AgentBot {
     ].filter(Boolean).join('\n'), { replyToMessageId: this.jobReplyTo(job) })
     const statusMessageId = status?.messageId
 
-    // The quick layer runs before DSH: a trivial request is answered by one small
-    // model call, which is ~20 times cheaper than the headless overhead alone.
-    const quick = await this.tryQuickAnswer({ job, statusMessageId })
-    if (quick) return quick
+    // One controller and one budget cover quick routing, DSH, verification and
+    // repair; routing spend is not lost if the task falls through to DSH.
+    const attemptController = new AbortController()
+    const attemptStartedAt = this.now().getTime()
+    const attemptBudget = createBudget({
+      tokenLimit: minLimit(this.config.limits.taskTokenBudget, job.procedure?.limits?.taskTokenBudget),
+      maxSteps: minLimit(this.config.limits.taskMaxSteps, job.procedure?.limits?.taskMaxSteps),
+      timeLimitMs: minLimit(this.config.limits.taskTimeoutMs, job.procedure?.limits?.taskTimeoutMs),
+      now: () => this.now().getTime(),
+    })
+    const quick = await this.tryQuickAnswer({
+      job,
+      statusMessageId,
+      controller: attemptController,
+      budget: attemptBudget,
+      startedAt: attemptStartedAt,
+    })
+    if (quick && !quick.fallback) return quick
 
     // Big work gets a plan first: cheaper than a run that went the wrong way.
     const planned = remote ? undefined : await this.parkForPlan({ job, statusMessageId })
@@ -2463,10 +2486,11 @@ export class AgentBot {
     }
 
     const before = await snapshot(dir)
-    const controller = new AbortController()
+    // Один контроллер попытки: быстрый слой и DSH используют его же.
+    const controller = attemptController
     // One parent signal for execution, verification and repair: cancel/stop aborts
     // exactly this controller; the orchestrator links every stage to it.
-    const startedAt = this.now().getTime()
+    const startedAt = attemptStartedAt
     const sessionId = job.freshSession || sessionTooBig
       ? undefined
       : job.sessionId
@@ -2506,6 +2530,12 @@ export class AgentBot {
     }
     let outputs = { selected: [] }
     let collected = false
+    let usageUnknown = false
+    // Расход быстрого маршрута, если задача ушла в DSH, входит в тот же итог.
+    if (quick?.fallback) {
+      if (quick.usage) addUsage(quick.usage)
+      else if (Number(attemptBudget.state.tokens) > 0 && spent.totalTokens === 0) spent.totalTokens = Number(attemptBudget.state.tokens)
+    }
     let result
     let verification
     let statusKind
@@ -2521,6 +2551,7 @@ export class AgentBot {
           if (this.running?.id === job.id) this.running.stage = stage
         },
         onUsage: (usage, info) => {
+          if (info?.unknown || usage?.totalTokens === undefined) usageUnknown = true
           addUsage(usage)
           if ((usage?.totalTokens ?? 0) > 0 || (usage?.steps ?? 0) > 0) {
             this.usage.record({
@@ -2646,6 +2677,7 @@ export class AgentBot {
       },
       usd: cost.usd,
       peak: cost.peak,
+      usageUnknown,
       files: outputs.selected.map((entry) => entry.relPath),
       sessionId: result.sessionId,
     })

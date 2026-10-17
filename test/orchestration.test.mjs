@@ -177,3 +177,38 @@ test('verification usage is charged and exhausting the budget blocks done', asyn
   assert.notEqual(outcome.status, STAGE.done)
   assert.equal(outcome.reason, 'budget')
 })
+
+test('verification usage is reported to the journal callback as unknown when absent', async () => {
+  const events = []
+  const executor = { id: 'dsh', execute: async () => ({ ok: true, text: 'x', usage: usage(10) }) }
+  const orchestrator = createOrchestrator({
+    executors: [executor],
+    verifier: verifier(0),
+    limits: { tokenLimit: 10_000 },
+    verify: async () => ({ status: 'passed', criteria: [], usage: { totalTokens: undefined, unknown: true } }),
+  })
+  await orchestrator.run({
+    job: { id: 't8' },
+    task: 'x',
+    signal: new AbortController().signal,
+    onUsage: (value, info) => events.push({ value, info }),
+  })
+  const verifying = events.find((entry) => entry.info.stage === STAGE.verifying)
+  assert.ok(verifying)
+  assert.equal(verifying.info.unknown, true)
+})
+
+test('verification does not start after the token budget is exhausted', async () => {
+  let verifyCalls = 0
+  const executor = { id: 'dsh', execute: async () => ({ ok: true, text: 'x', usage: usage(100) }) }
+  const orchestrator = createOrchestrator({
+    executors: [executor],
+    verifier: verifier(1),
+    limits: { tokenLimit: 100 },
+    verify: async () => { verifyCalls += 1; return { status: 'passed', criteria: [] } },
+  })
+  const outcome = await orchestrator.run({ job: { id: 't9' }, task: 'x', signal: new AbortController().signal })
+  assert.equal(verifyCalls, 0)
+  assert.notEqual(outcome.status, STAGE.done)
+  assert.equal(outcome.reason, 'budget')
+})

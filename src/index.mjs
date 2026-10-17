@@ -33,6 +33,7 @@ import { verify, deriveCriteria, detectResultKind, isVerificationNeeded, disable
 import { inspectDocument, inspectSpreadsheet, recalcSpreadsheet, renderDocument } from './tools/verify.mjs'
 import { runCodeChecks } from './execution/checks.mjs'
 import { createModelClient } from './integrations/model.mjs'
+import { createVerifyPorts } from './verification/ports.mjs'
 import { ProceduresStore } from './storage/procedures.mjs'
 import { createProcedures } from './procedures/index.mjs'
 import { createSynthesizer } from './tools/tts.mjs'
@@ -158,14 +159,14 @@ async function main() {
     model: config.routing.model,
     timeoutMs: config.routing.timeoutMs,
   })
-  const verifyPorts = {
+  const verifyPorts = createVerifyPorts({
+    modelClient,
     inspectDocument,
     inspectSpreadsheet,
     recalcSpreadsheet,
     renderDocument,
     runCodeChecks,
-    askModel: modelClient.enabled ? (prompt) => modelClient.askModel(prompt) : undefined,
-  }
+  })
   const verifier = {
     enabled: config.verify.enabled,
     maxAttempts: config.verify.maxAttempts,
