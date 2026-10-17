@@ -1124,3 +1124,20 @@ PLA-14: агентская часть (контракт v2, события, `ack
   лимите 100 → DSH получает 90; exhausted fallback → runner не вызван) и реальный
   `modelClient` (HTTP без usage → unknown).
 - Тесты: **423 зелёных** (+10 к 413). Merge и установка не выполнялись.
+
+## 2026-10-18: PLA-22 — lifecycle владеет очередью/awaiting/завершением, планирование в контексте
+
+Ветка `pla-22-lifecycle-owner` (поверх PLA-21 `2ff0245`).
+
+- `lifecycle-manager`: явные операции `enqueue`, `retry`, `cancelQueued`, `begin`,
+  `beginIfIdle`, `finish`, `updateRunning`, `cancelRunning`, `beginTask`,
+  `beginVerification`, `awaitAnswer`, `finishTask`, `snapshot` (read-only).
+- `AgentBot` больше не пишет `this.queue.push/filter`, `this.running =`, не вызывает
+  `journal.requeue/transition` и терминальные `journal.close/update`; передаёт намерения
+  и данные в lifecycle. Очередь/running читаются как снимок.
+- Планирование (`parkForPlan`, `maybePlanUnattended`) получает signal и общий budget,
+  занимает слот lifecycle и освобождает его; при отмене задача закрывается `cancelled`,
+  DSH не стартует. Расход плана вычитается до runner (тест 100 − 30 = 70).
+- `usage:{}` без `total_tokens` суммируется по известным полям, иначе unknown (не 0).
+- Тесты: **428 зелёных** (+5 к 423): операции lifecycle, планирование/отмена, остаток
+  бюджета, usage-фолбэк. Merge и установка не выполнялись.

@@ -38,8 +38,15 @@ export function createBudget({ tokenLimit = 0, maxSteps = 0, timeLimitMs = 0, no
     exhausted,
     /** Учесть расход стадии; неизвестный расход отмечается явно. */
     consume(usage = {}, { unknown = false } = {}) {
-      const total = Number(usage.totalTokens)
-      if (Number.isFinite(total) && total >= 0) state.tokens += total
+      // total_tokens может отсутствовать, но известные части — валидная сумма.
+      let total = Number(usage.totalTokens)
+      if (!Number.isFinite(total) || total < 0) {
+        const parts = [usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens]
+          .map(Number)
+          .filter((value) => Number.isFinite(value) && value > 0)
+        total = parts.length > 0 ? parts.reduce((sum, value) => sum + value, 0) : NaN
+      }
+      if (Number.isFinite(total)) state.tokens += total
       else state.unknownCost = true
       const steps = Number(usage.steps)
       if (Number.isFinite(steps) && steps >= 0) state.steps += steps

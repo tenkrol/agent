@@ -196,19 +196,12 @@ export class AgentBot {
   }
 
   get queue() {
-    return this.lifecycle.queue
+    return this.lifecycle.snapshot().queue
   }
 
-  set queue(value) {
-    this.lifecycle.queue = value
-  }
-
+  /** Read-only snapshot for /status; AgentBot не меняет активный контроллер. */
   get running() {
-    return this.lifecycle.running
-  }
-
-  set running(value) {
-    this.lifecycle.running = value
+    return this.lifecycle.snapshot().running
   }
 
   /** Prepare directories, identity and the polling cursor. */
@@ -613,7 +606,7 @@ export class AgentBot {
 
     if (action === 'x') {
       await this.clearAwaiting(chatId)
-      await this.lifecycle.update(taskId, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено пользователем' })
+      await this.lifecycle.finishTask(taskId, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено пользователем' })
       await this.safeAnswerCallback({ callbackId, text: 'Отменено' })
       await this.dropKeyboard({ chatId, messageId, markdown: `${update.callback.text}\n\n⛔ Отменено.` })
       return
@@ -1171,12 +1164,18 @@ export class AgentBot {
   }
 
   /** Draft a plan for an unattended task and return it for the prompt. */
-  async maybePlanUnattended({ job }) {
+  async maybePlanUnattended({ job, controller, budget }) {
     if (!this.config.plan.unattended || !this.quick?.enabled) return ''
     if (!(job.scheduledFrom || job.bridgeFrom)) return ''
     if (job.planApproved || job.forceDsh) return ''
     if (!this.planWorth(job.text)) return ''
-    const drafted = await this.quick.plan({ task: job.text, memory: this.memory?.render() ?? '' })
+    const planningOwner = this.lifecycle.beginIfIdle({ id: job.id, chatId: job.chatId, controller, startedAt: this.now().getTime(), attemptId: `${job.id}-plan` })
+    let drafted
+    try {
+      drafted = await this.quick.plan({ task: job.text, memory: this.memory?.render() ?? '', signal: controller?.signal })
+    } finally {
+      if (planningOwner) this.lifecycle.finish()
+    }
     if (drafted.usage.totalTokens > 0) {
       this.usage.record({
         usage: toProviderUsage(drafted.usage),
@@ -1186,6 +1185,8 @@ export class AgentBot {
         timeZone: this.config.runtime.timeZone,
       })
     }
+    budget?.consume(drafted.usage, { unknown: drafted.usage.totalTokens === undefined })
+    if (controller?.signal.aborted) return ''
     if (drafted.plan === '') {
       this.logger?.info('unattended plan skipped', { taskId: job.id, error: drafted.error })
       return ''
@@ -1226,10 +1227,20 @@ export class AgentBot {
    *
    * @returns {Promise<object|undefined>} a marker when the task is parked, undefined to just run it.
    */
-  async parkForPlan({ job, statusMessageId }) {
+  async parkForPlan({ job, statusMessageId, controller, budget }) {
     if (!this.shouldPlan(job)) return undefined
+    if (controller?.signal.aborted) {
+      await this.lifecycle.finishTask(job.id, { status: STATUS.cancelled, reason: 'cancelled' })
+      return { cancelled: true }
+    }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: `📝 Задача ${job.id}: составляю план.` })
-    const drafted = await this.quick.plan({ task: job.text, memory: this.memory?.render() ?? '' })
+    const planningOwner = this.lifecycle.beginIfIdle({ id: job.id, chatId: job.chatId, controller, startedAt: this.now().getTime(), attemptId: `${job.id}-plan` })
+    let drafted
+    try {
+      drafted = await this.quick.plan({ task: job.text, memory: this.memory?.render() ?? '', signal: controller?.signal })
+    } finally {
+      if (planningOwner) this.lifecycle.finish()
+    }
     if (drafted.usage.totalTokens > 0) {
       this.usage.record({
         usage: toProviderUsage(drafted.usage),
@@ -1239,23 +1250,27 @@ export class AgentBot {
         timeZone: this.config.runtime.timeZone,
       })
     }
+    budget?.consume(drafted.usage, { unknown: drafted.usage.totalTokens === undefined })
+    if (controller?.signal.aborted) {
+      await this.lifecycle.finishTask(job.id, { status: STATUS.cancelled, reason: 'cancelled' })
+      return { cancelled: true }
+    }
     // A planner that failed is not a reason to stop: the task just runs as before.
     if (drafted.plan === '') {
       this.logger?.info('plan skipped', { taskId: job.id, error: drafted.error })
       return undefined
     }
 
-    await this.lifecycle.update(job.id, {
-      status: STATUS.awaiting,
-      plan: drafted.plan.slice(0, 2000),
-      askedAt: this.now().getTime(),
-    })
-    await this.setAwaiting(job.chatId, {
+    await this.lifecycle.awaitAnswer({
       taskId: job.id,
-      kind: 'plan',
-      plan: drafted.plan,
-      originalText: String(job.text ?? ''),
-      brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+      chatId: job.chatId,
+      patch: { plan: drafted.plan.slice(0, 2000), askedAt: this.now().getTime() },
+      awaiting: {
+        kind: 'plan',
+        plan: drafted.plan,
+        originalText: String(job.text ?? ''),
+        brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+      },
     })
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: `📝 Задача ${job.id}: жду решения по плану.` })
     const sent = await this.safeSend(job.chatId, [
@@ -1328,16 +1343,13 @@ export class AgentBot {
     if (!this.shouldTryQuick(job)) return undefined
     const controller = providedController ?? new AbortController()
     const quickSignal = controller.signal
-    this.running = {
+    this.lifecycle.begin({
       id: job.id,
       chatId: job.chatId,
       controller,
       startedAt: startedAt ?? this.now().getTime(),
-      steps: 0,
-      tools: 0,
-      stage: 'executing',
       attemptId: `${job.id}-quick`,
-    }
+    })
     let outcome
     try {
       outcome = await this.orchestrator.run({
@@ -1348,7 +1360,7 @@ export class AgentBot {
         budget,
         stopping: this.stopping,
         onStage: (stage) => {
-          if (this.running?.id === job.id) this.running.stage = stage
+          if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage })
         },
         onUsage: (usage) => {
           if ((usage?.totalTokens ?? 0) > 0) {
@@ -1363,13 +1375,13 @@ export class AgentBot {
         },
       })
     } finally {
-      this.running = undefined
+      this.lifecycle.finish()
     }
     const quick = outcome?.result?.quick
     const cancelled = [STATUS.cancelled, STATUS.interrupted].includes(outcome?.status)
     const budgetBlocked = ['budget', 'unknown_budget'].includes(outcome?.reason)
     if (cancelled || budgetBlocked) {
-      await this.lifecycle.close(job.id, { status: outcome.status, reason: outcome.reason, quick: true })
+      await this.lifecycle.finishTask(job.id, { status: outcome.status, reason: outcome.reason, quick: true })
       return { quick: true, cancelled, budgetBlocked, text: quick?.text ?? '' }
     }
     if (!quick || quick.routed !== 'quick') return { fallback: true }
@@ -1378,7 +1390,7 @@ export class AgentBot {
     const status = outcome.status === STATUS.cancelled || outcome.status === STATUS.interrupted
       ? outcome.status
       : outcome.status
-    await this.lifecycle.close(job.id, {
+    await this.lifecycle.finishTask(job.id, {
       status,
       reason: outcome.reason,
       quick: true,
@@ -1433,8 +1445,8 @@ export class AgentBot {
     }
     if (this.running?.controller) {
       this.logger?.info('cancelling running task', { taskId: this.running.id, queued })
-      this.running.controller.abort()
-      await this.safeSend(chatId, `⛔ Останавливаю задачу ${this.running.id}${queued > 0 ? ` и убираю из очереди ${queued}` : ''}.`)
+      const cancelledRunning = this.lifecycle.cancelRunning()
+      await this.safeSend(chatId, `⛔ Останавливаю задачу ${cancelledRunning?.id ?? this.running.id}${queued > 0 ? ` и убираю из очереди ${queued}` : ''}.`)
       return
     }
     if (awaiting) {
@@ -1452,7 +1464,7 @@ export class AgentBot {
   /** Закрыть задачу ошибкой, не падая на недопустимом переходе. */
   async failTask(id, { reason = 'internal', error, status = STATUS.failed } = {}) {
     try {
-      await this.lifecycle.update(id, { status, reason, error })
+      await this.lifecycle.finishTask(id, { status, reason, error })
     } catch (cause) {
       this.logger?.warn('task status update failed', { taskId: id, error: cause })
     }
@@ -1492,7 +1504,9 @@ export class AgentBot {
     const prompt = record.sessionId
       ? `Продолжи прерванную задачу с того места, где остановилась. Исходная задача:\n${text}`
       : text
-    await this.journal.requeue(id, {
+    await this.lifecycle.retry({
+      taskId: id,
+      job: this.recordToJob(this.journal.get(id)),
       reason: 'продолжение прерванной задачи',
       patch: {
         text: prompt,
@@ -1502,7 +1516,6 @@ export class AgentBot {
         resumedAt: this.now().getTime(),
       },
     })
-    this.queue.push(this.recordToJob(this.journal.get(id)))
     this.worker = this.worker.then(() => this.drain()).catch((error) => {
       this.logger?.error('continue worker failed', { error })
     })
@@ -1927,7 +1940,9 @@ export class AgentBot {
           job.rootTaskId = job.rootTaskId ?? existing.rootTaskId
           job.revisionOf = job.revisionOf ?? existing.revisionOf
           job.facts = job.facts ?? existing.facts ?? []
-          await this.journal.requeue(job.id, {
+          await this.lifecycle.retry({
+            taskId: job.id,
+            job,
             reason: job.planApproved ? 'план утверждён' : 'ответ владельца',
             patch: {
               text: job.text,
@@ -1938,6 +1953,7 @@ export class AgentBot {
               brief: job.brief ?? existing.brief,
             },
           })
+          job._queuedByLifecycle = true
         } else {
           const accepted = await this.journal.openQueued(job)
           if (accepted.conflict) {
@@ -1962,7 +1978,7 @@ export class AgentBot {
         await this.alert(`🔗 Задача ${job.id} пришла из чата-бота: ${String(job.brief ?? '').slice(0, 120)}`)
       }
     }
-    this.queue.push(job)
+    if (!job._queuedByLifecycle) this.lifecycle.enqueue(job)
     if (this.running) {
       await this.safeSend(job.chatId, `📋 Принял, задача ${job.id} в очереди (позиция ${this.queue.length}).`)
     }
@@ -2170,15 +2186,15 @@ export class AgentBot {
     let state = record.status
     if (!TERMINAL.has(record.status)) {
       if (this.running?.id === id) {
-        this.running.controller?.abort()
+        this.lifecycle.cancelRunning()
         state = STATUS.cancelled
       } else if (record.status === STATUS.queued) {
-        this.queue = this.queue.filter((job) => job.id !== id)
-        await this.journal.update(id, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено по контракту' })
+        this.lifecycle.cancelQueued(id)
+        await this.lifecycle.finishTask(id, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено по контракту' })
         state = STATUS.cancelled
       } else {
         if (record.status === STATUS.awaiting_owner) await this.clearAwaiting(record.chatId)
-        await this.journal.update(id, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено по контракту' })
+        await this.lifecycle.finishTask(id, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено по контракту' })
         state = STATUS.cancelled
       }
     }
@@ -2330,10 +2346,24 @@ export class AgentBot {
       await this.maybeWarnLimit()
     }
     const issue = describeAttachmentIssues(intake.files, intake.notes)
+    // One controller and one budget cover quick routing, DSH, verification and
+    // repair; routing spend is not lost if the task falls through to DSH.
+    const attemptController = new AbortController()
+    const attemptStartedAt = this.now().getTime()
+    const attemptBudget = createBudget({
+      tokenLimit: minLimit(this.config.limits.taskTokenBudget, job.procedure?.limits?.taskTokenBudget),
+      maxSteps: minLimit(this.config.limits.taskMaxSteps, job.procedure?.limits?.taskMaxSteps),
+      timeLimitMs: minLimit(this.config.limits.taskTimeoutMs, job.procedure?.limits?.taskTimeoutMs),
+      now: () => this.now().getTime(),
+    })
     // Drafted before the run, not shown to anyone: for a task from the bridge or
     // a schedule there is no one to approve a plan, and a plan is exactly what
     // keeps those runs from wandering (the expensive failure mode).
-    const silentPlan = await this.maybePlanUnattended({ job })
+    const silentPlan = await this.maybePlanUnattended({ job, controller: attemptController, budget: attemptBudget })
+    if (attemptController.signal.aborted) {
+      await this.lifecycle.finishTask(job.id, { status: STATUS.cancelled, reason: 'cancelled' })
+      return
+    }
 
     const revisionNote = job.revisionContext
       ? [
@@ -2373,7 +2403,7 @@ export class AgentBot {
         if (!existing) {
           await this.journal.open({ id: job.id, chatId: job.chatId, userId: job.userId, brief: job.brief, retryOf: job.retryOf, scheduledFrom: job.scheduledFrom })
         }
-        await this.journal.transition(job.id, STATUS.running, {
+        await this.lifecycle.beginTask(job.id, {
           reason: job.continuationOf ? 'ответ владельца' : 'запуск',
           patch,
         })
@@ -2406,16 +2436,6 @@ export class AgentBot {
     ].filter(Boolean).join('\n'), { replyToMessageId: this.jobReplyTo(job) })
     const statusMessageId = status?.messageId
 
-    // One controller and one budget cover quick routing, DSH, verification and
-    // repair; routing spend is not lost if the task falls through to DSH.
-    const attemptController = new AbortController()
-    const attemptStartedAt = this.now().getTime()
-    const attemptBudget = createBudget({
-      tokenLimit: minLimit(this.config.limits.taskTokenBudget, job.procedure?.limits?.taskTokenBudget),
-      maxSteps: minLimit(this.config.limits.taskMaxSteps, job.procedure?.limits?.taskMaxSteps),
-      timeLimitMs: minLimit(this.config.limits.taskTimeoutMs, job.procedure?.limits?.taskTimeoutMs),
-      now: () => this.now().getTime(),
-    })
     const quick = await this.tryQuickAnswer({
       job,
       statusMessageId,
@@ -2426,24 +2446,22 @@ export class AgentBot {
     if (quick && !quick.fallback) return quick
 
     // Big work gets a plan first: cheaper than a run that went the wrong way.
-    const planned = remote ? undefined : await this.parkForPlan({ job, statusMessageId })
+    const planned = remote ? undefined : await this.parkForPlan({ job, statusMessageId, controller: attemptController, budget: attemptBudget })
     if (planned) return planned
 
     // Существенная неоднозначность формата: один вопрос до выполнения.
     if (this.verifier?.ambiguous?.({ taskText: job.text })) {
       const question = this.verifier.clarify?.() ?? 'Уточните формат результата.'
-      await this.lifecycle.update(job.id, {
-        status: STATUS.awaiting_owner,
-        reason: 'question',
-        question,
-        askedAt: this.now().getTime(),
-      })
-      await this.setAwaiting(job.chatId, {
+      await this.lifecycle.awaitAnswer({
         taskId: job.id,
-        sessionId: undefined,
-        kind: 'question',
-        question,
-        brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+        chatId: job.chatId,
+        patch: { reason: 'question', question, askedAt: this.now().getTime() },
+        awaiting: {
+          sessionId: undefined,
+          kind: 'question',
+          question,
+          brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+        },
       })
       if (job.route) {
         await this.delivery?.enqueue(buildQuestionEvent({
@@ -2471,16 +2489,13 @@ export class AgentBot {
       ? undefined
       : job.sessionId
         ?? (this.config.runtime.sessionContinuity ? this.state.get(`session:${job.chatId}`) : undefined)
-    this.running = {
+    this.lifecycle.begin({
       id: job.id,
       chatId: job.chatId,
       controller,
       startedAt,
-      steps: 0,
-      tools: 0,
-      stage: 'executing',
       attemptId: `${job.id}-1`,
-    }
+    })
     this.progress = { steps: 0, tool: '', sessionId }
     const progressTimer = setInterval(() => {
       void this.publishProgress(statusMessageId, job)
@@ -2525,7 +2540,7 @@ export class AgentBot {
         budget: attemptBudget,
         stopping: this.stopping,
         onStage: (stage) => {
-          if (this.running?.id === job.id) this.running.stage = stage
+          if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage })
         },
         onUsage: (usage, info) => {
           if (info?.unknown || usage?.totalTokens === undefined) usageUnknown = true
@@ -2540,8 +2555,7 @@ export class AgentBot {
             })
           }
           if (this.running?.id === job.id) {
-            this.running.steps = spent.steps
-            this.running.stage = info?.stage ?? this.running.stage
+            this.lifecycle.updateRunning({ steps: spent.steps, stage: info?.stage ?? this.running.stage })
           }
         },
         verify: async ({ result: runResult, signal, budget }) => {
@@ -2558,7 +2572,7 @@ export class AgentBot {
           if (!this.verifier.enabled) return this.verifier.disabled()
           if (!this.verifier.applicable({ taskText: job.text, files: outputs.selected })) return this.verifier.notRequired()
           try {
-            await this.journal?.transition(job.id, STATUS.verifying, { reason: 'проверка результата' })
+            await this.lifecycle.beginVerification(job.id, { reason: 'проверка результата' })
           } catch (error) {
             this.logger?.warn('verify transition failed', { taskId: job.id, error })
           }
@@ -2605,7 +2619,7 @@ export class AgentBot {
       reason = controller.signal.aborted ? 'cancelled' : 'internal'
     } finally {
       clearInterval(progressTimer)
-      this.running = undefined
+      this.lifecycle.finish()
     }
 
     // A run without a verification port still needs its output files collected.
@@ -2676,7 +2690,7 @@ export class AgentBot {
     }
 
     const stoppedByShutdown = statusKind === STATUS.interrupted
-    await this.lifecycle.close(job.id, {
+    await this.lifecycle.finishTask(job.id, {
       status: statusKind,
       verification,
       reason,
@@ -2704,19 +2718,21 @@ export class AgentBot {
   /** Park a task that asked a question, and send the question. */
   async parkForAnswer({ job, result, reply, statusMessageId, outputs }) {
     const sessionId = result.sessionId ?? job.sessionId
-    await this.lifecycle.update(job.id, {
-      status: STATUS.awaiting_owner,
-      reason: 'question',
-      question: reply.question,
-      askedAt: this.now().getTime(),
-      files: outputs.selected.map((entry) => entry.relPath),
-    })
-    await this.setAwaiting(job.chatId, {
+    await this.lifecycle.awaitAnswer({
       taskId: job.id,
-      sessionId,
-      kind: 'question',
-      question: reply.question,
-      brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+      chatId: job.chatId,
+      patch: {
+        reason: 'question',
+        question: reply.question,
+        askedAt: this.now().getTime(),
+        files: outputs.selected.map((entry) => entry.relPath),
+      },
+      awaiting: {
+        sessionId,
+        kind: 'question',
+        question: reply.question,
+        brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+      },
     })
     if (job.route) {
       const questionText = [
@@ -2756,23 +2772,23 @@ export class AgentBot {
   /** Park a task that offered variants, and send them as buttons. */
   async parkForVariants({ job, result, reply, statusMessageId, outputs }) {
     const sessionId = result.sessionId ?? job.sessionId
-    await this.lifecycle.update(job.id, {
-      status: STATUS.awaiting_owner,
-      reason: 'variants',
-      variants: reply.variants,
-      // The model often asks a clarifying question next to the variants; keep
-      // it so a free-text answer still makes sense later.
-      question: reply.question || undefined,
-      askedAt: this.now().getTime(),
-      files: outputs.selected.map((entry) => entry.relPath),
-    })
-    await this.setAwaiting(job.chatId, {
+    await this.lifecycle.awaitAnswer({
       taskId: job.id,
-      sessionId,
-      kind: 'variant',
-      variants: reply.variants,
-      question: reply.question || undefined,
-      brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+      chatId: job.chatId,
+      patch: {
+        reason: 'variants',
+        variants: reply.variants,
+        question: reply.question || undefined,
+        askedAt: this.now().getTime(),
+        files: outputs.selected.map((entry) => entry.relPath),
+      },
+      awaiting: {
+        sessionId,
+        kind: 'variant',
+        variants: reply.variants,
+        question: reply.question || undefined,
+        brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+      },
     })
     if (job.route) {
       const body = [
@@ -3085,8 +3101,8 @@ export class AgentBot {
   onDshEvent(event) {
     if (!this.running) return
     if (event?.type === 'tool_call') {
-      this.running.steps += 1
-      this.running.tools += 1
+      const running = this.lifecycle.snapshot().running
+      this.lifecycle.updateRunning({ steps: (running?.steps ?? 0) + 1, tools: (running?.tools ?? 0) + 1 })
       if (this.progress) this.progress.tool = String(event.tool ?? '')
     } else if (event?.type === 'status' && event.phase === 'step_end') {
       if (this.progress) this.progress.tool = ''

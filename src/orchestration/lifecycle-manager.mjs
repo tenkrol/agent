@@ -25,9 +25,75 @@ export function createTaskLifecycle({ journal, stateStore, now = () => Date.now(
       return state.queue.length
     },
 
+    /** Только чтение для /status и тестов; менять очередь снаружи нельзя. */
+    snapshot() {
+      return {
+        length: state.queue.length,
+        queue: [...state.queue],
+        running: state.running ? { ...state.running } : undefined,
+      }
+    },
+
     enqueue(job) {
       state.queue.push(job)
       return state.queue.length
+    },
+
+    /** Начать попытку: единственный владелец активного контроллера. */
+    begin({ id, chatId, controller, startedAt, attemptId, stage = 'executing' } = {}) {
+      if (state.running) throw new Error(`уже выполняется задача ${state.running.id}`)
+      state.running = { id, chatId, controller, startedAt, attemptId, steps: 0, tools: 0, stage }
+      return state.running
+    },
+    finish() {
+      state.running = undefined
+    },
+    /** Занять слот планированием, если он свободен; вернуть, были ли мы владельцем. */
+    beginIfIdle(payload = {}) {
+      if (state.running) return false
+      state.running = { steps: 0, tools: 0, stage: 'planning', ...payload }
+      return true
+    },
+    updateRunning(patch = {}) {
+      if (state.running) Object.assign(state.running, patch)
+    },
+    cancelRunning() {
+      const running = state.running
+      running?.controller?.abort()
+      return running
+    },
+
+    /** Повтор/продолжение: requeue в журнале и постановка в очередь. */
+    async retry({ taskId, job, reason, patch } = {}) {
+      if (journal) await journal.requeue(taskId, { reason, patch })
+      state.queue.push(job)
+      return state.queue.length
+    },
+
+    /** Убрать задачу из очереди по id, не трогая журнал. */
+    cancelQueued(id) {
+      const before = state.queue.length
+      state.queue = state.queue.filter((job) => job.id !== id)
+      return before - state.queue.length
+    },
+
+    /** Переход в выполнение — решение о статусе принимает lifecycle. */
+    beginTask(taskId, options = {}) {
+      return journal?.transition(taskId, 'running', options)
+    },
+    beginVerification(taskId, options = {}) {
+      return journal?.transition(taskId, 'verifying', options)
+    },
+
+    /** Вопрос/план: журнал и awaiting пишутся одной операцией. */
+    async awaitAnswer({ taskId, chatId, patch = {}, awaiting = {} } = {}) {
+      if (journal) await journal.update(taskId, { status: 'awaiting_owner', ...patch })
+      await this.setAwaiting(chatId, { taskId, ...awaiting })
+    },
+
+    /** Завершение: единственный выход терминального статуса. */
+    async finishTask(taskId, patch = {}) {
+      return journal?.close(taskId, patch)
     },
     shift() {
       return state.queue.shift()

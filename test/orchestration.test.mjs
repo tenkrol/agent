@@ -226,3 +226,12 @@ test('verification receives the remaining budget snapshot', async () => {
   assert.equal(seen.remaining.tokens, 70)
   assert.equal(seen.remaining.steps, 4)
 })
+
+test('usage without total_tokens is summed from known fields or marked unknown', () => {
+  const budget = createBudget({ tokenLimit: 100 })
+  budget.consume({ inputTokens: 2, outputTokens: 3 })
+  assert.equal(budget.state.tokens, 5)
+  assert.equal(budget.state.unknownCost, false)
+  budget.consume({})
+  assert.equal(budget.state.unknownCost, true)
+})

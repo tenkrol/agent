@@ -97,3 +97,40 @@ test('terminal close/update go through the same lifecycle port', async () => {
   assert.equal(calls[0][0], 'close')
   assert.equal(calls[1][0], 'update')
 })
+
+test('begin/finish own the active controller and retry requeues then enqueues', async () => {
+  const requeued = []
+  const lifecycle = createTaskLifecycle({
+    journal: { requeue: async (id, options) => requeued.push({ id, options }) },
+  })
+  const controller = new AbortController()
+  lifecycle.begin({ id: 't1', chatId: 42, controller, startedAt: 1, attemptId: 't1-1' })
+  assert.equal(lifecycle.snapshot().running.id, 't1')
+  assert.throws(() => lifecycle.begin({ id: 't2', controller }), /уже выполняется/)
+  lifecycle.cancelRunning()
+  assert.equal(controller.signal.aborted, true)
+  lifecycle.finish()
+  assert.equal(lifecycle.snapshot().running, undefined)
+
+  await lifecycle.retry({ taskId: 't2', job: { id: 't2' }, reason: 'ответ владельца', patch: { text: 'x' } })
+  assert.deepEqual(requeued[0].id, 't2')
+  assert.deepEqual(lifecycle.queue.map((job) => job.id), ['t2'])
+})
+
+test('awaitAnswer writes awaiting status and the state entry in one operation', async () => {
+  const stateStore = memoryState()
+  const updates = []
+  const lifecycle = createTaskLifecycle({
+    stateStore,
+    journal: { update: async (id, patch) => updates.push({ id, patch }) },
+  })
+  await lifecycle.awaitAnswer({
+    taskId: 't1',
+    chatId: 42,
+    patch: { question: 'формат?' },
+    awaiting: { kind: 'question', question: 'формат?' },
+  })
+  assert.equal(updates[0].id, 't1')
+  assert.equal(updates[0].patch.status, 'awaiting_owner')
+  assert.equal(lifecycle.awaitingFor(42).question, 'формат?')
+})

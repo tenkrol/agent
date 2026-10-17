@@ -254,12 +254,13 @@ test('/status reports the running task and the spend', async () => {
   const env = await makeBot()
   try {
     env.usage.record({ usage: { prompt_tokens: 5000, completion_tokens: 100 }, userId: '42', chatId: 42 })
-    env.bot.running = { id: 'task-1', chatId: 42, startedAt: Date.now() - 60_000, steps: 4, controller: new AbortController() }
+    env.bot.lifecycle.begin({ id: 'task-1', chatId: 42, startedAt: Date.now() - 60_000, controller: new AbortController() })
+    env.bot.lifecycle.updateRunning({ steps: 4 })
     await env.bot.handleUpdate(message({ text: '/status' }))
     const answer = env.platform.sent.at(-1).markdown
     assert.match(answer, /task-1/)
     assert.match(answer, /5\s?100|5100/)
-    env.bot.running = undefined
+    env.bot.lifecycle.finish()
   } finally {
     await env.close()
   }
