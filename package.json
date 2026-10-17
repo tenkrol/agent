@@ -11,6 +11,7 @@
   "scripts": {
     "start": "node src/index.mjs",
     "spec": "bash tools/spec-check.sh",
+    "git-check": "bash tools/git-check.sh",
     "pretest": "bash tools/spec-check.sh",
     "test": "node --test --test-force-exit test/*.test.mjs",
     "check": "bash tools/spec-check.sh && node --test --test-force-exit test/*.test.mjs"

@@ -4,3 +4,6 @@ data/
 backups/
 .ssh/
 node_modules/
+
+# Служебный мусор macOS
+.DS_Store
