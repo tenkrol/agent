@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createBridgeServer } from '../src/bridge-http.mjs'
+import { createBridgeServer } from '../src/bot-link/bridge-http.mjs'
 import { loadConfig } from '../src/config.mjs'
 import { createBotHarness, createTestLogger } from './helpers.mjs'
 

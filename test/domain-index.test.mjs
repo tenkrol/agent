@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const DOMAINS = ['config', 'secrets', 'storage', 'integrations', 'execution', 'tools', 'delivery']
+const DOMAINS = ['config', 'secrets', 'storage', 'integrations', 'execution', 'tools', 'delivery', 'bot-link']
 
 /** Индекс домена должен загружаться и что-то экспортировать. */
 test('индексы доменов загружаются и экспортируют API', async () => {
@@ -21,7 +21,7 @@ test('модули домена не лежат в корне src (кроме я
   const allowed = new Set([
     'index.mjs', 'bot.mjs', 'logger.mjs', 'format.mjs', 'config.mjs',
     'alerts.mjs', 'alerts-cli.mjs', 'observe.mjs', 'notify.mjs',
-    'bridge-http.mjs', 'memory.mjs', 'pricing.mjs',
+    'memory.mjs', 'pricing.mjs',
     // Расписания остаются частью ядра до slim-core: решают «когда», а не «как» исполнять.
     'schedule.mjs',
   ])

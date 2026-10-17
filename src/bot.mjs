@@ -31,6 +31,7 @@ import { AlertState } from './alerts.mjs'
 import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, readiness, renderReport } from './observe.mjs'
 import { formatDiskSize, joinPath } from './integrations/yandex-disk.mjs'
 import { buildTaskPrompt, describeAttachmentIssues } from './execution/prompt.mjs'
+import { mirrorToAssistant } from './bot-link/index.mjs'
 import { composeReportText, quickFooter, quickStatus, statusMarkdown } from './delivery/index.mjs'
 import { costOf, costOfDay, formatUsd } from './storage/pricing.mjs'
 import { needsExecutor } from './execution/quick.mjs'
@@ -1955,7 +1956,7 @@ export class AgentBot {
     try {
       const sent = await this.platform.sendText({ chatId, markdown, keyboard, replyToMessageId })
       // Дублируем ответ в чат-бот: владелец ведёт диалог там, и его ответ продолжает ту же беседу.
-      void mirrorToAssistant(markdown, this.config).catch(() => {})
+      void mirrorToAssistant(markdown, this.config, { logger: this.logger }).catch(() => {})
       return sent
     } catch (error) {
       this.logger?.error('sendMessage failed', { chatId, error })
@@ -1995,19 +1996,3 @@ const clamp = (value, min, max) => Math.min(Math.max(value, min), max)
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** Отправить текст ответа в точку приёма чат-бота (настройки — из домена config). */
-async function mirrorToAssistant(text, config) {
-  const token = config?.outbox?.token
-  if (!token) return
-  const body = String(text ?? '').trim()
-  if (!body) return
-  try {
-    await fetch(config.outbox.url || 'http://127.0.0.1:8788/outbox', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ text: body.slice(0, 3500), title: 'Ответ агента' }),
-      signal: AbortSignal.timeout(15000),
-    })
-  } catch {
-    // Молчание лучше падения: ответ уже ушёл владельцу в чат агента.
-  }
-}
