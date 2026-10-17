@@ -6,7 +6,8 @@
  * адаптером входа и доставки.
  */
 export function createTaskLifecycle({ journal, stateStore, queueStore, now = () => Date.now() } = {}) {
-  const state = { queue: [], running: undefined }
+  // Активных попыток может быть несколько (параллельные workers); каждая со своим id.
+  const state = { queue: [], runs: new Map() }
 
   return {
     get queue() {
@@ -16,10 +17,7 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
       state.queue = value
     },
     get running() {
-      return state.running
-    },
-    set running(value) {
-      state.running = value
+      return [...state.runs.values()][0]
     },
     get length() {
       return state.queue.length
@@ -27,10 +25,12 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
 
     /** Только чтение для /status и тестов; менять очередь снаружи нельзя. */
     snapshot() {
+      const runs = [...state.runs.values()]
       return {
         length: state.queue.length,
         queue: [...state.queue],
-        running: state.running ? { ...state.running } : undefined,
+        running: runs[0] ? { ...runs[0] } : undefined,
+        runningCount: runs.length,
       }
     },
 
@@ -43,26 +43,30 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
 
     /** Начать попытку: единственный владелец активного контроллера. */
     begin({ id, chatId, controller, startedAt, attemptId, stage = 'executing' } = {}) {
-      if (state.running) throw new Error(`уже выполняется задача ${state.running.id}`)
-      state.running = { id, chatId, controller, startedAt, attemptId, steps: 0, tools: 0, stage }
-      return state.running
+      if (state.runs.has(id)) throw new Error(`уже выполняется задача ${id}`)
+      const running = { id, chatId, controller, startedAt, attemptId, steps: 0, tools: 0, stage }
+      state.runs.set(id, running)
+      return running
     },
-    finish() {
-      state.running = undefined
+    finish(id) {
+      if (id === undefined) state.runs.clear()
+      else state.runs.delete(id)
     },
-    /** Занять слот планированием, если он свободен; вернуть, были ли мы владельцем. */
+    /** Занять слот планированием для этой задачи; вернуть, были ли мы владельцем. */
     beginIfIdle(payload = {}) {
-      if (state.running) return false
-      state.running = { steps: 0, tools: 0, stage: 'planning', ...payload }
+      if (payload.id !== undefined && state.runs.has(payload.id)) return false
+      const running = { steps: 0, tools: 0, stage: 'planning', ...payload }
+      state.runs.set(payload.id ?? `plan-${state.runs.size + 1}`, running)
       return true
     },
-    updateRunning(patch = {}) {
-      if (state.running) Object.assign(state.running, patch)
+    updateRunning(patch = {}, id) {
+      const running = id === undefined ? [...state.runs.values()][0] : state.runs.get(id)
+      if (running) Object.assign(running, patch)
     },
-    cancelRunning() {
-      const running = state.running
-      running?.controller?.abort()
-      return running
+    cancelRunning(id) {
+      const targets = id === undefined ? [...state.runs.values()] : [state.runs.get(id)].filter(Boolean)
+      for (const running of targets) running.controller?.abort()
+      return targets[0]
     },
 
     /** Повтор/продолжение: requeue в журнале и постановка в очередь. */

@@ -1184,7 +1184,7 @@ export class AgentBot {
     try {
       drafted = await this.quick.plan({ task: job.text, memory: this.memory?.render() ?? '', signal: controller?.signal })
     } finally {
-      if (planningOwner) this.lifecycle.finish()
+      if (planningOwner) this.lifecycle.finish(job.id)
     }
     if (drafted.usage.totalTokens > 0) {
       this.usage.record({
@@ -1249,7 +1249,7 @@ export class AgentBot {
     try {
       drafted = await this.quick.plan({ task: job.text, memory: this.memory?.render() ?? '', signal: controller?.signal })
     } finally {
-      if (planningOwner) this.lifecycle.finish()
+      if (planningOwner) this.lifecycle.finish(job.id)
     }
     if (drafted.usage.totalTokens > 0) {
       this.usage.record({
@@ -1370,7 +1370,7 @@ export class AgentBot {
         budget,
         stopping: this.stopping,
         onStage: (stage) => {
-          if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage })
+          if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage) => {
           if ((usage?.totalTokens ?? 0) > 0) {
@@ -1385,7 +1385,7 @@ export class AgentBot {
         },
       })
     } finally {
-      this.lifecycle.finish()
+      this.lifecycle.finish(job.id)
     }
     const quick = outcome?.result?.quick
     const cancelled = [STATUS.cancelled, STATUS.interrupted].includes(outcome?.status)
@@ -2196,7 +2196,7 @@ export class AgentBot {
     let state = record.status
     if (!TERMINAL.has(record.status)) {
       if (this.running?.id === id) {
-        this.lifecycle.cancelRunning()
+        this.lifecycle.cancelRunning(id)
         state = STATUS.cancelled
       } else if (record.status === STATUS.queued) {
         this.lifecycle.cancelQueued(id)
@@ -2552,7 +2552,7 @@ export class AgentBot {
         budget: attemptBudget,
         stopping: this.stopping,
         onStage: (stage) => {
-          if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage })
+          if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage, info) => {
           if (info?.unknown || usage?.totalTokens === undefined) usageUnknown = true
@@ -2567,7 +2567,7 @@ export class AgentBot {
             })
           }
           if (this.running?.id === job.id) {
-            this.lifecycle.updateRunning({ steps: spent.steps, stage: info?.stage ?? this.running.stage })
+            this.lifecycle.updateRunning({ steps: spent.steps, stage: info?.stage ?? this.running.stage }, job.id)
           }
         },
         verify: async ({ result: runResult, signal, budget }) => {
@@ -2631,7 +2631,7 @@ export class AgentBot {
       reason = controller.signal.aborted ? 'cancelled' : 'internal'
     } finally {
       clearInterval(progressTimer)
-      this.lifecycle.finish()
+      this.lifecycle.finish(job.id)
     }
 
     // A run without a verification port still needs its output files collected.
@@ -3114,7 +3114,7 @@ export class AgentBot {
     if (!this.running) return
     if (event?.type === 'tool_call') {
       const running = this.lifecycle.snapshot().running
-      this.lifecycle.updateRunning({ steps: (running?.steps ?? 0) + 1, tools: (running?.tools ?? 0) + 1 })
+      this.lifecycle.updateRunning({ steps: (running?.steps ?? 0) + 1, tools: (running?.tools ?? 0) + 1 }, running?.id)
       if (this.progress) this.progress.tool = String(event.tool ?? '')
     } else if (event?.type === 'status' && event.phase === 'step_end') {
       if (this.progress) this.progress.tool = ''
