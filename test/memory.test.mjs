@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
-import { MemoryStore } from '../src/memory.mjs'
+import { MemoryStore } from '../src/storage/memory.mjs'
 import { buildTaskPrompt } from '../src/prompt.mjs'
 import { createBotHarness, createTestLogger, tempDir, cleanup } from './helpers.mjs'
 

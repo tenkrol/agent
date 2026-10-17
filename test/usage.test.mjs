@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { test } from 'node:test'
 import { toProviderUsage } from '../src/bot.mjs'
-import { dayKey, UsageStore } from '../src/usage.mjs'
+import { dayKey, UsageStore } from '../src/storage/usage.mjs'
 import { cleanup, tempDir } from './helpers.mjs'
 
 test('DSH usage is mapped onto the provider shape the store understands', () => {

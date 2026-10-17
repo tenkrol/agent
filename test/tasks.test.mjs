@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
-import { STATUS, TaskJournal, describeTask } from '../src/tasks.mjs'
+import { STATUS, TaskJournal, describeTask } from '../src/storage/tasks.mjs'
 import { cleanup, createTestLogger, tempDir } from './helpers.mjs'
 
 const journalFor = (dir) => new TaskJournal({ file: path.join(dir, 'tasks.jsonl'), logger: createTestLogger(), maxEntries: 10 })

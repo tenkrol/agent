@@ -26,17 +26,17 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { saveAttachments } from './inbox.mjs'
-import { MEMORY_FILE } from './memory.mjs'
+import { MEMORY_FILE } from './storage/memory.mjs'
 import { AlertState } from './alerts.mjs'
 import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, readiness, renderReport } from './observe.mjs'
 import { formatDiskSize, joinPath } from './yandex-disk.mjs'
 import { buildTaskPrompt, describeAttachmentIssues } from './prompt.mjs'
-import { costOf, costOfDay, formatUsd } from './pricing.mjs'
+import { costOf, costOfDay, formatUsd } from './storage/pricing.mjs'
 import { needsExecutor } from './quick.mjs'
 import { CronError, describeCron, nextRunAt, parseCron, parseScheduleAdd } from './schedule.mjs'
 import { buildContinuation, parseReply, variantButtonLabel } from './reply-protocol.mjs'
-import { STATUS, describeTask } from './tasks.mjs'
-import { dayKey } from './usage.mjs'
+import { STATUS, describeTask } from './storage/tasks.mjs'
+import { dayKey } from './storage/usage.mjs'
 import {
   collectOutputs,
   directorySize,

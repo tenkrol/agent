@@ -8,12 +8,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentBot } from '../src/bot.mjs'
-import { MemoryStore } from '../src/memory.mjs'
+import { MemoryStore } from '../src/storage/memory.mjs'
 import { loadConfig } from '../src/config.mjs'
 import { ScheduleStore } from '../src/schedule.mjs'
-import { StateStore } from '../src/state.mjs'
-import { TaskJournal } from '../src/tasks.mjs'
-import { UsageStore } from '../src/usage.mjs'
+import { StateStore } from '../src/storage/state.mjs'
+import { TaskJournal } from '../src/storage/tasks.mjs'
+import { UsageStore } from '../src/storage/usage.mjs'
 
 /** Fresh temporary directory for one test. */
 export async function tempDir(prefix = 'agent-test-') {

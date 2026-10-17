@@ -7,7 +7,7 @@
  * is reported and replaced rather than crashing the bot.
  */
 import fs from 'node:fs/promises'
-import path from 'node:path'
+import { quarantineCorrupt, writeAtomic } from './atomic.mjs'
 
 const VERSION = 1
 const SAVE_DELAY_MS = 1000
@@ -38,7 +38,11 @@ export class StateStore {
       this.data = parsed.data
       this.logger?.info('state loaded', { file: this.file, keys: Object.keys(this.data).length })
     } catch (error) {
-      if (error.code !== 'ENOENT') this.logger?.warn('state file ignored', { file: this.file, error })
+      if (error.code !== 'ENOENT') {
+        // Повреждённый или незнакомый файл откладываем в копию, чтобы данные не исчезли.
+        this.logger?.warn('state file ignored', { file: this.file, error })
+        await quarantineCorrupt(this.file, { logger: this.logger })
+      }
     }
     return this
   }
@@ -86,10 +90,7 @@ export class StateStore {
     // Serialize writers: two flushes must not race on the same temporary file.
     this.writing = this.writing.then(async () => {
       try {
-        await fs.mkdir(path.dirname(this.file), { recursive: true })
-        const temporary = `${this.file}.tmp`
-        await fs.writeFile(temporary, `${JSON.stringify({ version: VERSION, data: this.data }, null, 2)}\n`, 'utf8')
-        await fs.rename(temporary, this.file)
+        await writeAtomic(this.file, `${JSON.stringify({ version: VERSION, data: this.data }, null, 2)}\n`)
       } catch (error) {
         this.logger?.error('state save failed', { error })
       }

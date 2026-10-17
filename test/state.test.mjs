@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
-import { StateStore } from '../src/state.mjs'
+import { StateStore } from '../src/storage/state.mjs'
 import { cleanup, tempDir } from './helpers.mjs'
 
 test('state is stored, flushed and read back', async () => {

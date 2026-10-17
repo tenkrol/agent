@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { costOf, costOfDay, formatUsd, isPeak, parsePeakWindows } from '../src/pricing.mjs'
+import { costOf, costOfDay, formatUsd, isPeak, parsePeakWindows } from '../src/storage/pricing.mjs'
 
 // Peak windows are 01:00–04:00 and 06:00–10:00 UTC on weekdays, per the provider.
 const wednesdayPeak = new Date('2026-10-07T02:00:00Z')
