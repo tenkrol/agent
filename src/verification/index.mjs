@@ -185,9 +185,10 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
         limitations.push(`модельная проверка не удалась: ${String(error?.message ?? error)}`)
       }
       const sourcesOk = /источники?\s*[:—-]?\s*(да|yes|есть)/i.test(verdict) || hasSources
+      const hasAssumptions = /предположени/i.test(String(answer)) || /предполож/i.test(verdict)
       for (const criterion of criteria) {
         if (criterion.id === 'sources') results.push(criterionResult(criterion, sourcesOk ? 'passed' : 'failed', sourcesOk ? 'источники есть' : 'источников нет'))
-        else results.push(criterionResult(criterion, /предполож/i.test(verdict) ? 'passed' : 'unavailable', verdict.slice(0, 120)))
+        else results.push(criterionResult(criterion, hasAssumptions ? 'passed' : 'unavailable', verdict.slice(0, 120)))
       }
     }
   } else {

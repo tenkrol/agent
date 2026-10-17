@@ -37,7 +37,8 @@ export function sectionsFrom(taskText = '') {
   const text = String(taskText)
   const found = new Set()
   const known = ['итоги', 'риски', 'план', 'введение', 'заключение', 'источники', 'выводы', 'приложения']
-  for (const word of known) if (new RegExp(`\\b${word}\\b`, 'i').test(text)) found.add(word)
+  // \b не работает для кириллицы в JS, поэтому проверяем вхождение слова в нижнем регистре.
+  for (const word of known) if (text.toLowerCase().includes(word)) found.add(word)
   const match = text.match(/(?:раздел(?:ами|ы|ов|ах)?|структур[аы]|содержани[ея])\s*[:\-—]?\s*([^\n.]{3,160})/i)
   if (match) {
     const tail = match[1].replace(/^(есть|должны быть|нужны|с)\s+/i, '')
