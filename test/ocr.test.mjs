@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { test } from 'node:test'
-import { OcrClient } from '../src/ocr.mjs'
+import { OcrClient } from '../src/tools/ocr.mjs'
 import { createTestLogger } from './helpers.mjs'
 
 /** A child process stub with the streams `OcrClient` listens to. */

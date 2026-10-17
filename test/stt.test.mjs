@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createOpenAiTranscriber, createTranscriber, createYandexTranscriber } from '../src/stt.mjs'
+import { createOpenAiTranscriber, createTranscriber, createYandexTranscriber } from '../src/tools/stt.mjs'
 
 /** Collect one request and answer with the given body. */
 function fakeFetch({ status = 200, body = '{}', capture } = {}) {

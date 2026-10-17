@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
-import { safeFileName, saveAttachments } from '../src/inbox.mjs'
+import { safeFileName, saveAttachments } from '../src/tools/inbox.mjs'
 import { cleanup, createStubPlatform, tempDir } from './helpers.mjs'
 
 const NOW = () => new Date('2026-10-08T19:00:00Z')

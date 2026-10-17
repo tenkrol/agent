@@ -25,7 +25,7 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { saveAttachments } from './inbox.mjs'
+import { saveAttachments } from './tools/inbox.mjs'
 import { MEMORY_FILE } from './storage/memory.mjs'
 import { AlertState } from './alerts.mjs'
 import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, readiness, renderReport } from './observe.mjs'

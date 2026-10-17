@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createSynthesizer, speechText } from '../src/tts.mjs'
+import { createSynthesizer, speechText } from '../src/tools/tts.mjs'
 
 /** Capture one request and answer with fake audio. */
 function fakeFetch({ status = 200, capture } = {}) {

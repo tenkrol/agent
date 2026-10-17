@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { loadConfig, secretsOf } from '../src/config.mjs'
-import { saveAttachments } from '../src/inbox.mjs'
+import { saveAttachments } from '../src/tools/inbox.mjs'
 import { createBotHarness, createStubPlatform, tempDir, cleanup } from './helpers.mjs'
 
 const base = { TELEGRAM_BOT_TOKEN: '1:a', ALLOWED_USER_IDS: '42' }
