@@ -12,7 +12,7 @@ gitroot=$(git rev-parse --show-toplevel 2>/dev/null || true)
 
 find_tool() {
   for dir in "$here" "$gitroot/tools" "$PWD/tools" \
-             "$HOME/Documents/deepseek-harness/default-workspace/tools"; do
+             "$HOME/Documents/deepseek-harness/tenkrol-agent/tools"; do
     [ -n "$dir" ] && [ -f "$dir/secrets.mjs" ] && { printf '%s\n' "$dir/secrets.mjs"; return 0; }
   done
   return 1
@@ -29,7 +29,7 @@ find_node() {
 
 tool=$(find_tool) || {
   echo "secrets: не нашёл secrets.mjs. Запустите обёртку из самого проекта:" >&2
-  echo "  bash /Users/andryukovy/Documents/deepseek-harness/default-workspace/tools/secrets.sh encrypt" >&2
+  echo "  bash /Users/andryukovy/Documents/deepseek-harness/tenkrol-agent/tools/secrets.sh encrypt" >&2
   exit 2
 }
 node=$(find_node) || {
