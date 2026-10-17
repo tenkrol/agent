@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
-import { CgroupLimiter, cgroupNameFor, ownCgroupPath } from '../src/cgroup.mjs'
+import { CgroupLimiter, cgroupNameFor, ownCgroupPath } from '../src/execution/cgroup.mjs'
 import { cleanup, createTestLogger, tempDir } from './helpers.mjs'
 
 /** A fake cgroup mount with the service's directory already delegated. */

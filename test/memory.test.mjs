@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { MemoryStore } from '../src/storage/memory.mjs'
-import { buildTaskPrompt } from '../src/prompt.mjs'
+import { buildTaskPrompt } from '../src/execution/prompt.mjs'
 import { createBotHarness, createTestLogger, tempDir, cleanup } from './helpers.mjs'
 
 const makeStore = async (dir) => new MemoryStore({ file: path.join(dir, 'memory.json'), logger: createTestLogger() }).load()

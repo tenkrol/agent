@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createBotHarness, createTestLogger } from './helpers.mjs'
-import { QuickClient } from '../src/quick.mjs'
+import { QuickClient } from '../src/execution/quick.mjs'
 
 const PLAN = '- собрать данные\n- посчитать итоги\n- оформить xlsx'
 

@@ -12,7 +12,7 @@ import {
   pruneReservedDirs,
   readDeliverable,
   snapshot,
-} from '../src/workspace.mjs'
+} from '../src/execution/workspace.mjs'
 import { cleanup, tempDir } from './helpers.mjs'
 
 test('the workspace gets its reserved directories', async () => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { needsExecutor, QuickClient, ROUTE_TO_DSH } from '../src/quick.mjs'
+import { needsExecutor, QuickClient, ROUTE_TO_DSH } from '../src/execution/quick.mjs'
 import { createBotHarness, createTestLogger } from './helpers.mjs'
 
 const KEY = 'sk-test'

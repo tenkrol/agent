@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildContinuation, parseReply, variantButtonLabel } from '../src/reply-protocol.mjs'
+import { buildContinuation, parseReply, variantButtonLabel } from '../src/execution/reply-protocol.mjs'
 
 test('a plain answer stays a plain answer', () => {
   const reply = parseReply('Готово: отчёт в outbox/отчёт.docx')

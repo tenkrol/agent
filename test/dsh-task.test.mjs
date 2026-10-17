@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { DshTaskRunner } from '../src/dsh-task.mjs'
+import { DshTaskRunner } from '../src/execution/dsh-task.mjs'
 import { createTestLogger, cleanup, tempDir } from './helpers.mjs'
 
 const fixture = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', 'fixtures', 'fake-dsh.sh')

@@ -30,11 +30,11 @@ import { MEMORY_FILE } from './storage/memory.mjs'
 import { AlertState } from './alerts.mjs'
 import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, readiness, renderReport } from './observe.mjs'
 import { formatDiskSize, joinPath } from './integrations/yandex-disk.mjs'
-import { buildTaskPrompt, describeAttachmentIssues } from './prompt.mjs'
+import { buildTaskPrompt, describeAttachmentIssues } from './execution/prompt.mjs'
 import { costOf, costOfDay, formatUsd } from './storage/pricing.mjs'
-import { needsExecutor } from './quick.mjs'
+import { needsExecutor } from './execution/quick.mjs'
 import { CronError, describeCron, nextRunAt, parseCron, parseScheduleAdd } from './schedule.mjs'
-import { buildContinuation, parseReply, variantButtonLabel } from './reply-protocol.mjs'
+import { buildContinuation, parseReply, variantButtonLabel } from './execution/reply-protocol.mjs'
 import { STATUS, describeTask } from './storage/tasks.mjs'
 import { dayKey } from './storage/usage.mjs'
 import {
@@ -46,7 +46,7 @@ import {
   pruneReservedDirs,
   readDeliverable,
   snapshot,
-} from './workspace.mjs'
+} from './execution/workspace.mjs'
 
 /** How many tasks may wait behind the running one. */
 const QUEUE_LIMIT = 3

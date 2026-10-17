@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildTaskPrompt, describeAttachmentIssues } from '../src/prompt.mjs'
+import { buildTaskPrompt, describeAttachmentIssues } from '../src/execution/prompt.mjs'
 
 test('a bare text task becomes the prompt unchanged', () => {
   const prompt = buildTaskPrompt({ text: 'сделай отчёт по продажам' })
