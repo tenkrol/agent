@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { loadConfig } from '../src/config.mjs'
+import { loadConfig } from '../src/config/index.mjs'
 import { createBotHarness } from './helpers.mjs'
 
 const OK_USAGE = { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 120, steps: 1, turns: 1 }

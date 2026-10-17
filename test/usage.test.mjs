@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { test } from 'node:test'
-import { toProviderUsage } from '../src/bot.mjs'
+import { toProviderUsage } from '../src/core/bot.mjs'
 import { dayKey, UsageStore } from '../src/storage/usage.mjs'
 import { cleanup, tempDir } from './helpers.mjs'
 

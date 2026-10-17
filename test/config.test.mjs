@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ConfigError, loadConfig, parseUserIds, secretsOf } from '../src/config.mjs'
+import { ConfigError, loadConfig, parseUserIds, secretsOf } from '../src/config/index.mjs'
 
 const base = {
   TELEGRAM_BOT_TOKEN: '123456:test-token',

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createBridgeServer } from '../src/bot-link/bridge-http.mjs'
-import { loadConfig } from '../src/config.mjs'
+import { loadConfig } from '../src/config/index.mjs'
 import { createBotHarness, createTestLogger } from './helpers.mjs'
 
 const base = { TELEGRAM_BOT_TOKEN: '1:a', ALLOWED_USER_IDS: '42' }

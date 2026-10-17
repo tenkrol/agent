@@ -10,7 +10,7 @@ import {
   nextRunAt,
   parseCron,
   parseScheduleAdd,
-} from '../src/schedule.mjs'
+} from '../src/core/schedule.mjs'
 import { cleanup, createTestLogger, tempDir } from './helpers.mjs'
 
 const MOSCOW = 'Europe/Moscow'

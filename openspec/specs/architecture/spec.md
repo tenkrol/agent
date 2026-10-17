@@ -125,3 +125,19 @@
 - WHEN он запускается
 - THEN используются синтетические замеры и порт уведомлений
 - AND сеть и Telegram не задействованы
+
+## Итоговая раскладка (после slim-core)
+
+```
+src/
+  index.mjs            точка сборки зависимостей
+  format.mjs           общий модуль форматирования текста для Telegram (единственное исключение)
+  core/                bot.mjs (оркестрация), schedule.mjs (расписания — «когда»)
+  ops/                 logger.mjs (журналирование)
+  config/  secrets/  storage/  integrations/  execution/  tools/  delivery/  bot-link/  autonomy/
+```
+
+Правила, которые проверяются тестами: в корне `src/` нет ничего, кроме `index.mjs` и
+`format.mjs`; домены не импортируют `core`; сеть — только в `integrations` (входящий HTTP —
+ещё и в `bot-link`); процессы — только в `execution` и `tools`; шифртекст секретов — только
+в `secrets`; файлы состояния — только в `storage`.

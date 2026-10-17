@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { loadConfig, secretsOf } from '../src/config.mjs'
+import { loadConfig, secretsOf } from '../src/config/index.mjs'
 import { saveAttachments } from '../src/tools/inbox.mjs'
 import { createBotHarness, createStubPlatform, tempDir, cleanup } from './helpers.mjs'
 

@@ -25,20 +25,20 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { saveAttachments } from './tools/inbox.mjs'
-import { MEMORY_FILE } from './storage/memory.mjs'
-import { AlertState } from './autonomy/alerts.mjs'
-import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, readiness, renderReport } from './autonomy/observe.mjs'
-import { formatDiskSize, joinPath } from './integrations/yandex-disk.mjs'
-import { buildTaskPrompt, describeAttachmentIssues } from './execution/prompt.mjs'
-import { mirrorToAssistant } from './bot-link/index.mjs'
-import { composeReportText, quickFooter, quickStatus, statusMarkdown } from './delivery/index.mjs'
-import { costOf, costOfDay, formatUsd } from './storage/pricing.mjs'
-import { needsExecutor } from './execution/quick.mjs'
+import { saveAttachments } from '../tools/inbox.mjs'
+import { MEMORY_FILE } from '../storage/memory.mjs'
+import { AlertState } from '../autonomy/alerts.mjs'
+import { OBSERVATIONS_FILE, READY_DAYS, loadObservations, readiness, renderReport } from '../autonomy/observe.mjs'
+import { formatDiskSize, joinPath } from '../integrations/yandex-disk.mjs'
+import { buildTaskPrompt, describeAttachmentIssues } from '../execution/prompt.mjs'
+import { mirrorToAssistant } from '../bot-link/index.mjs'
+import { composeReportText, quickFooter, quickStatus, statusMarkdown } from '../delivery/index.mjs'
+import { costOf, costOfDay, formatUsd } from '../storage/pricing.mjs'
+import { needsExecutor } from '../execution/quick.mjs'
 import { CronError, describeCron, nextRunAt, parseCron, parseScheduleAdd } from './schedule.mjs'
-import { buildContinuation, parseReply, variantButtonLabel } from './execution/reply-protocol.mjs'
-import { STATUS, describeTask } from './storage/tasks.mjs'
-import { dayKey } from './storage/usage.mjs'
+import { buildContinuation, parseReply, variantButtonLabel } from '../execution/reply-protocol.mjs'
+import { STATUS, describeTask } from '../storage/tasks.mjs'
+import { dayKey } from '../storage/usage.mjs'
 import {
   collectOutputs,
   directorySize,
@@ -48,7 +48,7 @@ import {
   pruneReservedDirs,
   readDeliverable,
   snapshot,
-} from './execution/workspace.mjs'
+} from '../execution/workspace.mjs'
 
 /** How many tasks may wait behind the running one. */
 const QUEUE_LIMIT = 3
