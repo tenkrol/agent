@@ -1151,3 +1151,15 @@ PLA-14: агентская часть (контракт v2, события, `ack
   signal/budget; usage без total_tokens — сумма известных полей или unknown.
 - Дельты влиты в `openspec/specs/{orchestration,verification,core}`, изменения в
   `changes/archive/PLA-21`, `PLA-22`. Тесты: 428.
+
+## 2026-10-18: PLA-21/PLA-22 установлены и проверены
+
+- `main` = `90b582e` (+ отчёт), релиз на Финляндии `release-20261017-225600`, сервис active.
+- Живые проверки:
+  - отмена `225612-oal` (длинный DOCX, unattended plan уже начался) → `cancelled`,
+    `aborted:true`, без успешного отчёта;
+  - обычная задача `225633-oam` → `done`, XLSX проверен (`computation: passed`),
+    доставка подтверждена (`delivery acked`).
+- Откат проверен: `release-20261017-221924` поднялся active, затем возврат на
+  `release-20261017-225600`.
+- Тесты: 428. Изменения PLA-21/PLA-22 в архиве; PLA-20/SQLite не начинались.
