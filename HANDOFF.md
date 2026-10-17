@@ -488,3 +488,27 @@ bearer-токен. Наружу порт не открыт, TLS не нужен.
   один); (2) в юните службы не было строки `ExecStart`, а `sed` её не создаёт — systemd
   отказывался запускать (добавлен шаблон строки, таймер поднимается явно).
 - Тестов **286**.
+
+---
+
+# Обновление 2026-10-17: OpenSpec и карта архитектуры
+
+Разработка переведена на OpenSpec (подход из статьи Haulmont про Spec-Driven Development;
+статья на Habr целиком не открылась — сайт отдаёт обрезанную версию, ритуал адаптирован из
+соседнего репозитория `tenkrol/assistant`, где он уже работает).
+
+Добавлено:
+- `openspec/project.md` — проект, серверы, ограничения, список доменов;
+- `openspec/conventions.md` — язык, тесты, деплой, DoD, секреты, запреты;
+- `openspec/README.md` — ритуал: задача словами → спека → одобрение → код → деплой → архив;
+- `openspec/specs/workflow/spec.md` — правила процесса;
+- `openspec/changes/2026-10-17-architecture-map/` — **ожидает одобрения**: карта из 11
+  доменов, правила зависимостей и очередь из 10 узких изменений без изменения поведения;
+- `tools/spec-check.mjs` + `tools/spec-check.sh` — проверка структуры изменений;
+- `AGENTS.md` в корне — правила для любой сессии.
+
+Первый шаг реализации — изменение `extract-config` (настройки), затем `extract-storage`,
+`extract-integrations`, `extract-execution`, `extract-tools`, `extract-delivery`,
+`extract-bot-link`, `extract-autonomy`, `slim-core`, `openspec-tooling`.
+
+`bash tools/spec-check.sh` — «структура в порядке», тестов 288, поведение не менялось.
