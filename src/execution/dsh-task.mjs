@@ -152,11 +152,12 @@ export class DshTaskRunner {
    * @param {object} request - `task` text, optional `sessionId`, `signal`, `id`.
    * @returns {Promise<object>} the run result; `ok` is false for a failed or timed-out run.
    */
-  async run({ task, sessionId, signal, id, tokenBudget, maxSteps } = {}) {
+  async run({ task, sessionId, signal, id, tokenBudget, maxSteps, timeoutMs } = {}) {
     const startedAt = Date.now()
     // Лимиты процедуры действуют только на этот запуск и не меняют глобальные.
     const runTokenBudget = Number(tokenBudget) > 0 ? Number(tokenBudget) : this.tokenBudget
     const runMaxSteps = Number(maxSteps) > 0 ? Number(maxSteps) : this.maxSteps
+    const runTimeoutMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : this.timeoutMs
     const usage = emptyUsage()
     const tools = []
     const errors = []
@@ -287,11 +288,11 @@ export class DshTaskRunner {
       }
 
       const onAbort = () => stop('abort')
-      timeoutTimer = Number.isFinite(this.timeoutMs) && this.timeoutMs > 0
+      timeoutTimer = Number.isFinite(runTimeoutMs) && runTimeoutMs > 0
         ? setTimeout(() => {
-          this.logger?.warn('task timeout, killing dsh', { timeoutMs: this.timeoutMs })
+          this.logger?.warn('task timeout, killing dsh', { timeoutMs: runTimeoutMs })
           stop('timeout')
-        }, this.timeoutMs)
+        }, runTimeoutMs)
         : undefined
       timeoutTimer?.unref?.()
 

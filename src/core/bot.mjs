@@ -40,6 +40,8 @@ import { buildContinuation, parseReply, variantButtonLabel } from '../execution/
 import { STATUS, TERMINAL, describeTask } from '../storage/tasks.mjs'
 import { bodyHash } from '../storage/requests.mjs'
 import { redactSecrets } from '../secrets/guard.mjs'
+import { createOrchestrator } from '../orchestration/orchestrator.mjs'
+import { createDshExecutor } from '../agents/dsh/index.mjs'
 import { buildQuestionEvent, buildResultEvent } from '../bot-link/events.mjs'
 import { dayKey } from '../storage/usage.mjs'
 import {
@@ -122,10 +124,23 @@ export class AgentBot {
    * @param {string} [options.instructionsPath] - `AGENTS.md` template to install.
    * @param {() => Date} [options.now] - clock, injected by tests.
    */
-  constructor({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
+  constructor({ config, platform, runner, orchestrator, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
     this.config = config
     this.platform = platform
     this.runner = runner
+    // Оркестратор — единственный владелец цикла исполнение → проверка → исправление.
+    this.orchestrator = orchestrator ?? createOrchestrator({
+      // Адаптер читает this.runner на каждом запуске: тесты и переключение
+      // исполнителя не должны требовать пересоздания бота.
+      executors: [createDshExecutor({ runner: { run: (request) => this.runner.run(request) } })],
+      verifier,
+      limits: {
+        tokenLimit: config.limits.taskTokenBudget,
+        maxSteps: config.limits.taskMaxSteps,
+        timeLimitMs: config.limits.taskTimeoutMs,
+      },
+      logger,
+    })
     this.usage = usage
     this.state = state
     this.journal = journal
@@ -2415,51 +2430,162 @@ export class AgentBot {
 
     const before = await snapshot(dir)
     const controller = new AbortController()
-    // Unattended work (a schedule, a task from the bridge) starts a fresh DSH
-    // session: inheriting the owner's long conversation would pay for its whole
-    // context on every run — measured at 130k tokens for a one-line task.
+    // One parent signal for execution, verification and repair: cancel/stop aborts
+    // exactly this controller; the orchestrator links every stage to it.
+    const startedAt = this.now().getTime()
     const sessionId = job.freshSession || sessionTooBig
       ? undefined
       : job.sessionId
         ?? (this.config.runtime.sessionContinuity ? this.state.get(`session:${job.chatId}`) : undefined)
-    this.running = { id: job.id, chatId: job.chatId, controller, startedAt: this.now().getTime(), steps: 0, tools: 0 }
+    this.running = {
+      id: job.id,
+      chatId: job.chatId,
+      controller,
+      startedAt,
+      steps: 0,
+      tools: 0,
+      stage: 'executing',
+      attemptId: `${job.id}-1`,
+    }
     this.progress = { steps: 0, tool: '', sessionId }
     const progressTimer = setInterval(() => {
       void this.publishProgress(statusMessageId, job)
     }, this.config.runtime.progressIntervalMs)
     progressTimer.unref?.()
 
+    const spent = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+      steps: 0,
+      turns: 0,
+      maxStepInputTokens: 0,
+    }
+    const addUsage = (usage = {}) => {
+      for (const field of Object.keys(spent)) {
+        if (field === 'maxStepInputTokens') spent[field] = Math.max(spent[field], Number(usage[field]) || 0)
+        else spent[field] += Number(usage[field]) || 0
+      }
+    }
+    let outputs = { selected: [] }
+    let collected = false
     let result
+    let verification
+    let statusKind
+    let reason
     try {
-      // The task id names its cgroup, so the limits stay attached to the right job.
-      result = await this.runner.run({
+      const outcome = await this.orchestrator.run({
+        job,
         task,
         sessionId,
         signal: controller.signal,
-        id: job.id,
-        tokenBudget: job.procedure?.limits?.taskTokenBudget,
-        maxSteps: job.procedure?.limits?.taskMaxSteps,
+        stopping: this.stopping,
+        onStage: (stage) => {
+          if (this.running?.id === job.id) this.running.stage = stage
+        },
+        onUsage: (usage, info) => {
+          addUsage(usage)
+          if ((usage?.totalTokens ?? 0) > 0 || (usage?.steps ?? 0) > 0) {
+            this.usage.record({
+              usage: toProviderUsage(usage),
+              userId: job.userId,
+              chatId: job.chatId,
+              date: this.now(),
+              timeZone,
+            })
+          }
+          if (this.running?.id === job.id) {
+            this.running.steps = spent.steps
+            this.running.stage = info?.stage ?? this.running.stage
+          }
+        },
+        verify: async ({ result: runResult, signal }) => {
+          const afterRun = await snapshot(dir)
+          outputs = await collectOutputs({
+            before,
+            after: afterRun,
+            dir,
+            maxFiles: this.config.workspace.maxOutputFiles,
+            maxBytes: this.config.workspace.maxOutputFileBytes,
+          })
+          collected = true
+          if (!this.verifier) return undefined
+          if (!this.verifier.enabled) return this.verifier.disabled()
+          if (!this.verifier.applicable({ taskText: job.text, files: outputs.selected })) return this.verifier.notRequired()
+          try {
+            await this.journal?.transition(job.id, STATUS.verifying, { reason: 'проверка результата' })
+          } catch (error) {
+            this.logger?.warn('verify transition failed', { taskId: job.id, error })
+          }
+          let value
+          try {
+            value = await this.verifier.evaluate({
+              taskText: job.text,
+              files: outputs.selected,
+              answer: runResult.text,
+              root: dir,
+              signal,
+            })
+          } catch (error) {
+            value = { status: 'unavailable', criteria: [], limitations: [String(error?.message ?? error)], checkedAt: this.now().getTime() }
+          }
+          if (signal?.aborted) {
+            return {
+              ...(value ?? {}),
+              status: 'unavailable',
+              criteria: value?.criteria ?? [],
+              limitations: [...(value?.limitations ?? []), 'проверка прервана отменой'],
+              checkedAt: this.now().getTime(),
+            }
+          }
+          return value
+        },
+        repairTask: ({ feedback }) => `${job.text}\n\nПроверка результата нашла проблемы:\n${feedback}\nИсправь только их и отдай результат заново.`,
       })
+      result = outcome.result
+      verification = outcome.verification
+      statusKind = outcome.status
+      reason = outcome.reason
+      // Остановка сервиса — не отмена владельцем: после рестарта задача
+      // должна читаться как interrupted, а не cancelled.
+      if (this.stopping && result?.aborted) {
+        statusKind = STATUS.interrupted
+        reason = 'перезапуск сервиса'
+      }
+    } catch (error) {
+      this.logger?.error('orchestrator failed', { taskId: job.id, error })
+      result = { ok: false, text: '', usage: {}, aborted: controller.signal.aborted, error: String(error?.message ?? error) }
+      statusKind = controller.signal.aborted ? STATUS.cancelled : STATUS.failed
+      reason = controller.signal.aborted ? 'cancelled' : 'internal'
     } finally {
       clearInterval(progressTimer)
+      this.running = undefined
     }
 
-    let spent = result.usage
-    this.usage.record({
-      usage: toProviderUsage(spent),
-      userId: job.userId,
-      chatId: job.chatId,
-      date: this.now(),
-      timeZone,
-    })
+    // A run without a verification port still needs its output files collected.
+    if (!collected) {
+      const afterRun = await snapshot(dir)
+      outputs = await collectOutputs({
+        before,
+        after: afterRun,
+        dir,
+        maxFiles: this.config.workspace.maxOutputFiles,
+        maxBytes: this.config.workspace.maxOutputFileBytes,
+      })
+    }
+
     this.logger?.info('task finished', {
       taskId: job.id,
       ok: result.ok,
-      durationMs: result.durationMs,
+      durationMs: this.now().getTime() - startedAt,
       steps: spent.steps,
       totalTokens: spent.totalTokens,
       timedOut: result.timedOut,
       aborted: result.aborted,
+      status: statusKind,
     })
     if (result.sessionId && this.config.runtime.sessionContinuity && !job.freshSession) {
       this.state.set(`session:${job.chatId}`, result.sessionId)
@@ -2468,101 +2594,21 @@ export class AgentBot {
     if (sessionTooBig) {
       this.logger?.info('session context refreshed', { chatId: job.chatId, was: sessionSize, limit: sessionLimit })
     }
-    this.running = undefined
 
     // Facts the agent chose to remember: read them, then remove the file so it
     // neither lingers nor travels to the owner as a deliverable.
     await this.ingestMemory({ job, dir })
 
-    // Collect files even from a failed run: work already done is still work.
-    const after = await snapshot(dir)
-    let outputs = await collectOutputs({
-      before,
-      after,
-      dir,
-      maxFiles: this.config.workspace.maxOutputFiles,
-      maxBytes: this.config.workspace.maxOutputFileBytes,
-    })
-
-    // Проверка результата (PLA-15): до финального статуса, отдельно от выполнения.
-    let verification
-    if (this.verifier) {
-      if (!this.verifier.enabled) verification = this.verifier.disabled()
-      else if (!this.verifier.applicable({ taskText: job.text, files: outputs.selected })) verification = this.verifier.notRequired()
-      else {
-        try {
-          await this.journal?.transition(job.id, STATUS.verifying, { reason: 'проверка результата' })
-        } catch (error) {
-          this.logger?.warn('verify transition failed', { taskId: job.id, error })
-        }
-        try {
-          verification = await this.verifier.evaluate({ taskText: job.text, files: outputs.selected, answer: result.text, root: dir })
-        } catch (error) {
-          verification = { status: 'unavailable', criteria: [], limitations: [String(error?.message ?? error)], checkedAt: this.now().getTime() }
-        }
-      }
-    }
-
-    // Одна повторная попытка исправить проваленные критерии — в пределах бюджета.
-    if (verification && ['failed', 'partial'].includes(verification.status)
-      && (this.verifier?.maxAttempts ?? 0) > 0 && result.ok && !result.aborted && !result.timedOut) {
-      const failed = (verification.criteria ?? []).filter((criterion) => criterion.status !== 'passed')
-      const feedback = failed.map((criterion) => `- ${criterion.id}: ${criterion.evidence || criterion.notes || 'не пройдено'}`).join('\n')
-      try {
-        const repairResult = await this.runner.run({
-          task: `${job.text}\n\nПроверка результата нашла проблемы:\n${feedback}\nИсправь только их и отдай результат заново.`,
-          sessionId: result.sessionId,
-          signal: new AbortController().signal,
-          id: `${job.id}-fix`,
-        })
-        if (repairResult?.ok) {
-          result = repairResult
-          this.usage.record({
-            usage: toProviderUsage(repairResult.usage),
-            userId: job.userId,
-            chatId: job.chatId,
-            date: this.now(),
-            timeZone,
-          })
-          spent = {
-            ...spent,
-            inputTokens: (spent.inputTokens || 0) + (repairResult.usage.inputTokens || 0),
-            outputTokens: (spent.outputTokens || 0) + (repairResult.usage.outputTokens || 0),
-            cacheReadTokens: (spent.cacheReadTokens || 0) + (repairResult.usage.cacheReadTokens || 0),
-            cacheWriteTokens: (spent.cacheWriteTokens || 0) + (repairResult.usage.cacheWriteTokens || 0),
-            reasoningTokens: (spent.reasoningTokens || 0) + (repairResult.usage.reasoningTokens || 0),
-            totalTokens: (spent.totalTokens || 0) + (repairResult.usage.totalTokens || 0),
-            steps: (spent.steps || 0) + (repairResult.usage.steps || 0),
-            turns: (spent.turns || 0) + (repairResult.usage.turns || 0),
-            maxStepInputTokens: Math.max(spent.maxStepInputTokens || 0, repairResult.usage.maxStepInputTokens || 0),
-          }
-          const afterRepair = await snapshot(dir)
-          outputs = await collectOutputs({
-            before,
-            after: afterRepair,
-            dir,
-            maxFiles: this.config.workspace.maxOutputFiles,
-            maxBytes: this.config.workspace.maxOutputFileBytes,
-          })
-          verification = await this.verifier.evaluate({ taskText: job.text, files: outputs.selected, answer: result.text, root: dir })
-          if (verification) verification.attempts = 2
-          this.logger?.info('verification repaired', { taskId: job.id, status: verification?.status })
-        }
-      } catch (error) {
-        this.logger?.warn('repair run failed', { taskId: job.id, error })
-      }
-    }
-
     const cost = costOf(spent, this.pricingOptions())
     await this.journal?.update(job.id, {
       verification,
-      durationMs: result.durationMs,
+      durationMs: this.now().getTime() - startedAt,
       steps: spent.steps,
       tokens: {
         total: spent.totalTokens,
-        uncachedInput: (Number(spent.inputTokens) || 0) + (Number(spent.cacheWriteTokens) || 0),
-        cachedInput: Number(spent.cacheReadTokens) || 0,
-        output: Number(spent.outputTokens) || 0,
+        uncachedInput: spent.inputTokens + spent.cacheWriteTokens,
+        cachedInput: spent.cacheReadTokens,
+        output: spent.outputTokens,
       },
       usd: cost.usd,
       peak: cost.peak,
@@ -2585,38 +2631,18 @@ export class AgentBot {
       return
     }
 
-    // Остановка сервиса — не отмена владельцем: задача должна пережить рестарт
-    // как прерванная и не считаться завершённой.
-    const stoppedByShutdown = this.stopping && result.aborted
-    const verificationFailed = verification && ['partial', 'failed', 'unavailable'].includes(verification.status)
-    const statusKind = stoppedByShutdown
-      ? STATUS.interrupted
-      : result.aborted
-        ? STATUS.cancelled
-        : result.ok && !result.timedOut
-          ? (verificationFailed ? STATUS.partial : STATUS.done)
-          : STATUS.failed
-    const reason = stoppedByShutdown
-      ? 'перезапуск сервиса'
-      : result.aborted
-        ? 'cancelled'
-      : result.timedOut
-        ? 'timeout'
-        : result.budgetExceeded
-          ? 'budget'
-          : result.stepsExceeded
-            ? 'steps'
-            : result.ok ? undefined : 'exit'
+    const stoppedByShutdown = statusKind === STATUS.interrupted
     await this.journal?.close(job.id, {
       status: statusKind,
       verification,
       reason,
-      error: result.ok || result.aborted ? undefined : (result.stderr?.slice(-300) || `код ${result.exitCode}`),
+      error: result.ok || result.aborted ? undefined : (result.stderr?.slice(-300) || result.error || `код ${result.exitCode}`),
     })
     if (stoppedByShutdown) {
       this.logger?.info('task interrupted by shutdown', { taskId: job.id })
       return
     }
+
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
     const resultFiles = job.route ? await this.registerResultFiles(job, outputs) : []
     await this.reportResult({ job, result, statusMessageId, diskPaths, resultFiles, verification })
