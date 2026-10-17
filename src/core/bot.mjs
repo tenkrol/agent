@@ -178,6 +178,7 @@ export class AgentBot {
     await this.journal?.compact()
     // Принятые задачи и прерванные выполнения восстанавливаются до опроса Telegram:
     // владелец не должен видеть «пустой» агент, пока очередь ещё не поднята.
+    await this.memory?.cleanupTasks?.(this.config.memory?.taskRetentionDays ?? 7)
     this.recovered = await this.recoverTasks()
     if (this.delivery?.store) {
       const recovered = await this.delivery.store.recoverSending()
@@ -1577,7 +1578,7 @@ export class AgentBot {
           text: rendered.text,
           attachments: [],
           brief: `🧩 ${name} v${rendered.version}`,
-          procedure: { id: rendered.procedure.id, name, version: rendered.version, params: this.parseParams(paramParts.join(' ')) },
+          procedure: { id: rendered.procedure.id, name, version: rendered.version, params: this.parseParams(paramParts.join(' ')), limits: rendered.limits ?? {} },
           variantsMode: 'never',
           freshSession: true,
           forceDsh: true,
@@ -1711,7 +1712,7 @@ export class AgentBot {
           continue
         }
         taskText = rendered.text
-        procedure = { id: rendered.procedure.id, name: parsed.name, version: rendered.version, params: parsed.params ?? {} }
+        procedure = { id: rendered.procedure.id, name: parsed.name, version: rendered.version, params: parsed.params ?? {}, limits: rendered.limits ?? {} }
       }
       await this.enqueueJob({
         id: this.journal ? this.journal.nextId(now) : `sched-${record.id}-${now.getTime().toString(36)}`,
@@ -1801,7 +1802,7 @@ export class AgentBot {
           const rendered = this.procedures?.render({ name: record.procedureId, params: record.procedureParams ?? {} })
           if (!rendered?.ok) return `Не запускаю: ${rendered?.error ?? 'процедура недоступна'}`
           taskText = rendered.text
-          procedure = { id: rendered.procedure.id, name: record.procedureId, version: rendered.version, params: record.procedureParams ?? {} }
+          procedure = { id: rendered.procedure.id, name: record.procedureId, version: rendered.version, params: record.procedureParams ?? {}, limits: rendered.limits ?? {} }
         }
         await this.enqueueJob({
           id: this.journal ? this.journal.nextId(this.now()) : `sched-${record.id}-${this.now().getTime().toString(36)}`,
@@ -2431,7 +2432,14 @@ export class AgentBot {
     let result
     try {
       // The task id names its cgroup, so the limits stay attached to the right job.
-      result = await this.runner.run({ task, sessionId, signal: controller.signal, id: job.id })
+      result = await this.runner.run({
+        task,
+        sessionId,
+        signal: controller.signal,
+        id: job.id,
+        tokenBudget: job.procedure?.limits?.taskTokenBudget,
+        maxSteps: job.procedure?.limits?.taskMaxSteps,
+      })
     } finally {
       clearInterval(progressTimer)
     }

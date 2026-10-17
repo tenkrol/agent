@@ -33,6 +33,7 @@ test('a procedure saved without all fields stays a draft and cannot run', async 
     assert.equal(domain.render({ name: 'weekly' }).ok, false)
 
     await domain.setField('weekly', 'criteria', criteria)
+    await domain.setField('weekly', 'limits', '{"taskMaxSteps":3}')
     const active = await domain.activate('weekly')
     assert.equal(active.version.status, 'active')
     const rendered = domain.render({ name: 'weekly' })
@@ -40,6 +41,7 @@ test('a procedure saved without all fields stays a draft and cannot run', async 
     assert.match(rendered.text, /Собери обзор/)
     assert.match(rendered.text, /Формат результата: DOCX/)
     assert.match(rendered.text, /Критерии проверки/)
+    assert.equal(rendered.limits.taskMaxSteps, 3)
   } finally {
     await cleanup(dir)
   }

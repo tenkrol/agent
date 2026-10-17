@@ -139,6 +139,17 @@ export class MemoryStore {
     return changed
   }
 
+  /** Убрать контекст задач старше срока хранения. */
+  async cleanupTasks(days = 7, now = this.now().getTime()) {
+    if (!(days > 0)) return 0
+    const cutoff = now - days * 24 * 3600 * 1000
+    const before = this.facts.length
+    this.facts = this.facts.filter((fact) => !(fact.kind === 'task' && (fact.createdAt ?? 0) < cutoff))
+    const removed = before - this.facts.length
+    if (removed > 0) await this.save()
+    return removed
+  }
+
   /** How many current facts are kept. */
   get size() {
     const now = this.now().getTime()

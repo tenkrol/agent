@@ -151,7 +151,7 @@ export function createProcedures({ store, globalLimits = {}, now = () => new Dat
     const parts = [filled]
     if (version.resultFormat) parts.push(`Формат результата: ${version.resultFormat}`)
     if (version.criteria?.length) parts.push(`Критерии проверки:\n${version.criteria.map((criterion) => `- ${criterion.text}`).join('\n')}`)
-    return { ok: true, text: parts.join('\n\n'), version: version.version, procedure: { id: record.id, name: record.name } }
+    return { ok: true, text: parts.join('\n\n'), version: version.version, limits: version.limits ?? {}, procedure: { id: record.id, name: record.name } }
   }
 
   return {

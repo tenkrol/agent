@@ -114,3 +114,18 @@ test('/memory set and /memory history keep the old value visible', async () => {
     await env.close()
   }
 })
+
+
+test('task context is cleaned up after its retention period', async () => {
+  const dir = await tempDir()
+  try {
+    const store = await makeStore(dir)
+    await store.add('старый контекст задачи', { kind: 'task', scope: { type: 'task', value: 't1' }, createdAt: 1 })
+    assert.equal(store.list().length, 1)
+    const removed = await store.cleanupTasks(7, Date.now() + 8 * 24 * 3600 * 1000)
+    assert.equal(removed, 1)
+    assert.equal(store.list().length, 0)
+  } finally {
+    await cleanup(dir)
+  }
+})

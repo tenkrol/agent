@@ -152,8 +152,11 @@ export class DshTaskRunner {
    * @param {object} request - `task` text, optional `sessionId`, `signal`, `id`.
    * @returns {Promise<object>} the run result; `ok` is false for a failed or timed-out run.
    */
-  async run({ task, sessionId, signal, id } = {}) {
+  async run({ task, sessionId, signal, id, tokenBudget, maxSteps } = {}) {
     const startedAt = Date.now()
+    // Лимиты процедуры действуют только на этот запуск и не меняют глобальные.
+    const runTokenBudget = Number(tokenBudget) > 0 ? Number(tokenBudget) : this.tokenBudget
+    const runMaxSteps = Number(maxSteps) > 0 ? Number(maxSteps) : this.maxSteps
     const usage = emptyUsage()
     const tools = []
     const errors = []
@@ -259,14 +262,14 @@ export class DshTaskRunner {
             total: Number(event.usage.totalTokens) || 0,
             runningTotal: usage.totalTokens,
           })
-          if (this.maxSteps > 0 && usage.steps >= this.maxSteps) {
-            this.logger?.warn('task hit its step limit, stopping', { steps: usage.steps, maxSteps: this.maxSteps, totalTokens: usage.totalTokens })
+          if (runMaxSteps > 0 && usage.steps >= runMaxSteps) {
+            this.logger?.warn('task hit its step limit, stopping', { steps: usage.steps, maxSteps: runMaxSteps, totalTokens: usage.totalTokens })
             stop('steps')
           }
-          if (this.tokenBudget > 0 && usage.totalTokens > this.tokenBudget) {
+          if (runTokenBudget > 0 && usage.totalTokens > runTokenBudget) {
             this.logger?.warn('task over its token budget, stopping', {
               totalTokens: usage.totalTokens,
-              budget: this.tokenBudget,
+              budget: runTokenBudget,
               steps: usage.steps,
             })
             stop('budget')
