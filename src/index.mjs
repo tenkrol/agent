@@ -25,6 +25,10 @@ import { createTranscriber } from './tools/stt.mjs'
 import { StateStore } from './storage/state.mjs'
 import { TaskJournal } from './storage/tasks.mjs'
 import { ActionLog } from './storage/actions.mjs'
+import { DeliveryStore } from './storage/deliveries.mjs'
+import { RequestStore } from './storage/requests.mjs'
+import { FileStore } from './storage/files.mjs'
+import { DeliveryWorker } from './bot-link/deliver.mjs'
 import { createSynthesizer } from './tools/tts.mjs'
 import { UsageStore } from './storage/usage.mjs'
 import { VisionClient } from './tools/vision.mjs'
@@ -93,10 +97,35 @@ async function main() {
       maxEntries: config.journal.actionLogMax,
     }).load()
     : undefined
+  const files = await new FileStore({
+    dir: path.join(stateDir, 'files'),
+    file: path.join(stateDir, 'files.jsonl'),
+    logger,
+    inputTtlDays: 7,
+    resultTtlDays: config.workspace.retentionDays,
+  }).load()
+  const deliveries = await new DeliveryStore({
+    file: path.join(stateDir, 'deliveries.jsonl'),
+    logger,
+    maxEntries: 10_000,
+  }).load()
+  const requests = await new RequestStore({ file: path.join(stateDir, 'requests.jsonl'), logger }).load()
   const schedules = new ScheduleStore({
     file: path.join(stateDir, 'schedules.json'),
     timeZone: config.schedules.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     logger,
+  })
+
+  // Доставка отдельно от выполнения: повторы, ack, каналы assistant/personal.
+  const delivery = new DeliveryWorker({
+    store: deliveries,
+    platform,
+    outbox: config.outbox,
+    logger,
+    actions,
+    tickMs: config.delivery.tickMs,
+    retryMs: config.delivery.retryMs,
+    maxAttempts: config.delivery.maxAttempts,
   })
 
   /** @type {AgentBot} */
@@ -213,6 +242,9 @@ async function main() {
     state,
     journal,
     actions,
+    delivery,
+    requests,
+    files,
     schedules,
     vision: visionEnabled ? vision : undefined,
     ocr: ocrAvailable ? ocr : undefined,
@@ -225,6 +257,8 @@ async function main() {
     instructionsPath: path.join(projectDir, 'deploy', 'workspace', 'AGENTS.md.template'),
   })
 
+  delivery.onFailed = (record, error) => bot.notifyDeliveryFailure(record, error)
+
   // The bridge is a loopback listener reached through an SSH tunnel from Spain.
   const bridgeEnabled = config.bridge.http && Boolean(config.bridge.token)
   const bridge = bridgeEnabled
@@ -235,6 +269,14 @@ async function main() {
       maxTaskChars: config.bridge.maxTaskChars,
       logger,
       onSubmit: ({ task, source, requestId }) => bot.submitBridgedTask({ task, source, requestId }),
+      contractV2: config.bridge.contractV2,
+      routeConfig: { botId: config.bridge.routeBotId, chatId: config.bridge.routeChatId },
+      files,
+      maxFileBytes: config.files.maxBytes,
+      onSubmitV2: (request) => bot.submitV2Task(request),
+      getTask: (id) => bot.taskState(id),
+      onReply: (id, body) => bot.replyTask(id, body),
+      onCancel: (id, body) => bot.cancelTaskById(id, body),
     })
     : undefined
   if (!bridgeEnabled) logger.info('bridge http off', { http: config.bridge.http, token: Boolean(config.bridge.token) })

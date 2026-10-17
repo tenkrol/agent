@@ -48,6 +48,16 @@ export const DEFAULTS = {
   ACTION_LOG: 'true',
   ACTION_LOG_MAX: '5000',
 
+  // Контракт v2 и доставка: маршрут ассистента, повторы, предел файла.
+  CONTRACT_V2: 'true',
+  BRIDGE_ROUTE_BOT_ID: '',
+  BRIDGE_ROUTE_CHAT_ID: '',
+  DELIVERY_TICK_MS: '30000',
+  DELIVERY_RETRY_MS: '60000,300000,900000,3600000,21600000',
+  DELIVERY_MAX_ATTEMPTS: '8',
+  DELIVERY_TEXT_CHARS: '3500',
+  FILES_MAX_BYTES: '20971520',
+
   // Model: the key is forwarded to DSH as DEEPSEEK_API_KEY before each run.
   MODEL_API_KEY: '',
   MODEL_NAME: 'deepseek-flash',

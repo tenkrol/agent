@@ -143,6 +143,9 @@ Telegram ──polling──▶ bot.mjs ──▶ inbox/ (вложения: visi
 | Наблюдатель | `OBSERVE_RETAIN_DAYS`, `OBSERVE_MOUNT` |
 | Отчёты | `REPORT_STYLE` (brief\|verbose) |
 | Восстановление | `RECOVERY_NOTIFY`, `ACTION_LOG`, `ACTION_LOG_MAX` |
+| Контракт v2 | `CONTRACT_V2`, `BRIDGE_ROUTE_BOT_ID`, `BRIDGE_ROUTE_CHAT_ID` |
+| Доставка | `DELIVERY_TICK_MS`, `DELIVERY_RETRY_MS`, `DELIVERY_MAX_ATTEMPTS`, `DELIVERY_TEXT_CHARS` |
+| Файлы контракта | `FILES_MAX_BYTES` |
 | Алерты | `ALERTS_MODE`, `ALERT_DEDUP_MIN`, `ALERT_QUIET_HOURS`, `ALERT_EMERGENCY_DISK_MB`, `ALERT_WARN_DISK_MB`, `DIGEST_AT` |
 
 ## Связь с чат-ботом и отчёты

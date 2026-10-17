@@ -9,6 +9,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { AgentBot } from '../src/core/bot.mjs'
 import { ActionLog } from '../src/storage/actions.mjs'
+import { DeliveryStore } from '../src/storage/deliveries.mjs'
+import { RequestStore } from '../src/storage/requests.mjs'
+import { FileStore } from '../src/storage/files.mjs'
+import { DeliveryWorker } from '../src/bot-link/deliver.mjs'
 import { MemoryStore } from '../src/storage/memory.mjs'
 import { loadConfig } from '../src/config/index.mjs'
 import { ScheduleStore } from '../src/core/schedule.mjs'
@@ -153,7 +157,7 @@ export function testConfig(dir, overrides = {}) {
  * @param {object} [options] - `runner`, `configEnv`, `vision`, `ocr`.
  * @returns {Promise<object>} the environment, with `close()` to clean up.
  */
-export async function createBotHarness({ runner = createStubRunner(), configEnv = {}, vision, ocr, now, mirror, seedJournal } = {}) {
+export async function createBotHarness({ runner = createStubRunner(), configEnv = {}, vision, ocr, now, mirror, seedJournal, deliveryFetch, deliveryOutbox } = {}) {
   const dir = await tempDir()
   const config = testConfig(dir, configEnv)
   const platform = createStubPlatform()
@@ -181,9 +185,34 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
     file: path.join(config.workspace.stateDir, 'actions.jsonl'),
     logger,
   }).load()
+  const files = await new FileStore({
+    dir: path.join(config.workspace.stateDir, 'files'),
+    file: path.join(config.workspace.stateDir, 'files.jsonl'),
+    logger,
+    resultTtlDays: config.workspace.retentionDays,
+  }).load()
+  const deliveries = await new DeliveryStore({
+    file: path.join(config.workspace.stateDir, 'deliveries.jsonl'),
+    logger,
+  }).load()
+  const requests = await new RequestStore({
+    file: path.join(config.workspace.stateDir, 'requests.jsonl'),
+    logger,
+  }).load()
+  const delivery = new DeliveryWorker({
+    store: deliveries,
+    platform,
+    outbox: deliveryOutbox ?? { url: 'http://outbox.test', token: 'test-token' },
+    logger,
+    actions,
+    fetchImpl: deliveryFetch,
+    retryMs: [10],
+    maxAttempts: 3,
+    tickMs: 60_000,
+  })
   // Тест восстановления подкладывает готовый журнал до старта бота.
   if (seedJournal) await seedJournal({ journal, state, dir, config, path, actions })
-  const bot = new AgentBot({ config, platform, runner, usage, state, journal, actions, schedules, vision, ocr, memory, logger, now, mirror })
+  const bot = new AgentBot({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, schedules, vision, ocr, memory, logger, now, mirror })
   await bot.start()
   return {
     dir,
@@ -194,6 +223,10 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
     usage,
     journal,
     actions,
+    delivery,
+    deliveries,
+    requests,
+    files,
     schedules,
     memory,
     bot,

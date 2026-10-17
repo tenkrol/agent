@@ -111,6 +111,13 @@ const JOB_FIELDS = [
   'procedure',
   'route',
   'forceDsh',
+  'facts',
+  'rootTaskId',
+  'resultVersion',
+  'revisionOf',
+  'revisionContext',
+  'resultFiles',
+  'resultSummary',
 ]
 
 /** Add one durable line to an append-only file and sync it to disk. */

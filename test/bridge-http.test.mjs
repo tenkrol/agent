@@ -41,7 +41,7 @@ test('health answers without a secret, unknown paths do not', async () => {
   try {
     const health = await fetch(`${url}/health`)
     assert.equal(health.status, 200)
-    assert.deepEqual(await health.json(), { ok: true, service: 'agent-bridge' })
+    assert.deepEqual(await health.json(), { ok: true, service: 'agent-bridge', contract: 2 })
     const missing = await fetch(`${url}/nope`)
     assert.equal(missing.status, 404)
   } finally {

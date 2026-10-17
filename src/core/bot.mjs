@@ -37,7 +37,9 @@ import { costOf, costOfDay, formatUsd } from '../storage/pricing.mjs'
 import { needsExecutor } from '../execution/quick.mjs'
 import { CronError, describeCron, nextRunAt, parseCron, parseScheduleAdd } from './schedule.mjs'
 import { buildContinuation, parseReply, variantButtonLabel } from '../execution/reply-protocol.mjs'
-import { STATUS, describeTask } from '../storage/tasks.mjs'
+import { STATUS, TERMINAL, describeTask } from '../storage/tasks.mjs'
+import { bodyHash } from '../storage/requests.mjs'
+import { buildQuestionEvent, buildResultEvent } from '../bot-link/events.mjs'
 import { dayKey } from '../storage/usage.mjs'
 import {
   collectOutputs,
@@ -90,6 +92,7 @@ const COMMANDS = [
   ['/task', 'подробности одной задачи: /task <id>'],
   ['/retry', 'повторить задачу: /retry <id>'],
   ['/continue', 'продолжить прерванную задачу: /continue <id>'],
+  ['/deliver', 'повторить доставку результата: /deliver <id>'],
   ['/usage', 'расход по дням в токенах и деньгах: /usage [дней]'],
   ['/memory', 'что агент запомнил о вас; /memory — список, /forget <номер> — убрать'],
   ['/disk', 'Яндекс.Диск: /disk — состояние и файлы, /disk get <путь>, /disk link <путь>'],
@@ -117,7 +120,7 @@ export class AgentBot {
    * @param {string} [options.instructionsPath] - `AGENTS.md` template to install.
    * @param {() => Date} [options.now] - clock, injected by tests.
    */
-  constructor({ config, platform, runner, usage, state, journal, actions, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
+  constructor({ config, platform, runner, usage, state, journal, actions, delivery, requests, files, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
     this.config = config
     this.platform = platform
     this.runner = runner
@@ -125,6 +128,9 @@ export class AgentBot {
     this.state = state
     this.journal = journal
     this.actions = actions
+    this.delivery = delivery
+    this.requests = requests
+    this.files = files
     this.schedules = schedules
     this.vision = vision
     this.ocr = ocr
@@ -169,6 +175,11 @@ export class AgentBot {
     // Принятые задачи и прерванные выполнения восстанавливаются до опроса Telegram:
     // владелец не должен видеть «пустой» агент, пока очередь ещё не поднята.
     this.recovered = await this.recoverTasks()
+    if (this.delivery?.store) {
+      const recovered = await this.delivery.store.recoverSending()
+      if (recovered > 0) this.logger?.info('delivery sending recovered', { count: recovered })
+      this.delivery.start()
+    }
     if (this.schedules && this.config.schedules.enabled) {
       await this.schedules.load()
       // A restart must not fire a burst of missed runs: the next occurrence is
@@ -273,6 +284,13 @@ export class AgentBot {
       procedure: record.procedure,
       route: record.route,
       forceDsh: record.forceDsh,
+      facts: record.facts ?? [],
+      rootTaskId: record.rootTaskId,
+      resultVersion: record.resultVersion,
+      revisionOf: record.revisionOf,
+      revisionContext: record.revisionContext,
+      resultFiles: record.resultFiles,
+      resultSummary: record.resultSummary,
     }
   }
 
@@ -320,7 +338,15 @@ export class AgentBot {
     this.running?.controller?.abort()
     await this.worker.catch(() => {})
     await this.platform.stop?.()
-    await Promise.all([this.usage.flush(), this.state.flush(), this.journal?.flush(), this.actions?.flush()])
+    this.delivery?.stop?.()
+    await Promise.all([
+      this.usage.flush(),
+      this.state.flush(),
+      this.journal?.flush(),
+      this.actions?.flush(),
+      this.requests?.flush?.(),
+      this.delivery?.store?.flush?.(),
+    ])
   }
 
   /** Poll until `stop()` is called. */
@@ -638,6 +664,9 @@ export class AgentBot {
         return
       case '/continue':
         await this.safeSend(chatId, await this.continueInterrupted({ args }))
+        return
+      case '/deliver':
+        await this.safeSend(chatId, await this.deliverAgain(args))
         return
       case '/usage':
         await this.safeSend(chatId, this.usageText(args))
@@ -1300,6 +1329,18 @@ export class AgentBot {
       peak: cost.peak,
       finishedAt: this.now().getTime(),
     })
+    if (job.route) {
+      const text = String(quick.text ?? '').trim()
+      await this.journal?.update(job.id, { resultSummary: { text, files: [], version: job.resultVersion ?? 1 } })
+      await this.delivery?.enqueue(buildResultEvent({
+        task: { ...job, route: job.route },
+        text,
+        files: [],
+        version: job.resultVersion ?? 1,
+        maxChars: this.config.delivery?.textChars ?? 3500,
+      }))
+      return { quick: true, text }
+    }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: quickStatus({ taskId: job.id }) })
     await this.safeSend(job.chatId, [
       quick.text,
@@ -1614,6 +1655,12 @@ export class AgentBot {
         if (job.continuationOf) {
           const existing = this.journal.get(job.id)
           if (!existing) return { queued: false, reason: 'задача для продолжения не найдена' }
+          // Продолжение наследует маршрут и версию исходной задачи.
+          job.route = job.route ?? existing.route
+          job.resultVersion = job.resultVersion ?? existing.resultVersion
+          job.rootTaskId = job.rootTaskId ?? existing.rootTaskId
+          job.revisionOf = job.revisionOf ?? existing.revisionOf
+          job.facts = job.facts ?? existing.facts ?? []
           await this.journal.requeue(job.id, {
             reason: job.planApproved ? 'план утверждён' : 'ответ владельца',
             patch: {
@@ -1705,7 +1752,263 @@ export class AgentBot {
     return { taskId: outcome.taskId ?? id, duplicate: Boolean(outcome.duplicate), state: outcome.state ?? 'queued' }
   }
 
+  // ─── контракт v2 ──────────────────────────────────────────────────────────
+
+  /** Постановка задачи по контракту v2 (маршрут, файлы, ревизия, факты). */
+  async submitV2Task(request = {}) {
+    const chatId = this.alertChatId()
+    if (chatId === undefined) throw new Error('не настроен чат владельца для результата')
+    const id = this.journal ? this.journal.nextId(this.now()) : `v2-${this.now().getTime().toString(36)}`
+    let revision
+    if (request.revisionOf) {
+      const old = this.journal?.get(request.revisionOf)
+      if (!old) {
+        const error = new Error('задача для ревизии не найдена')
+        error.code = 'NOT_FOUND'
+        throw error
+      }
+      revision = {
+        rootTaskId: old.rootTaskId ?? old.id,
+        resultVersion: (Number(old.resultVersion) || 1) + 1,
+        previousId: old.id,
+        previousText: String(old.request ?? old.text ?? ''),
+        previousFiles: old.resultFiles ?? [],
+      }
+    }
+    const attachments = (request.attachments ?? []).map((item) => ({ ...item, kind: item.kind ?? 'document' }))
+    const outcome = await this.enqueueJob({
+      id,
+      chatId,
+      userId: chatId,
+      text: request.task,
+      attachments,
+      brief: `🔗 ${String(request.task ?? '').slice(0, 280)}`,
+      bridgeFrom: request.source ?? 'assistant',
+      requestKey: `assistant:${request.requestId}`,
+      route: request.route,
+      facts: request.facts ?? [],
+      // С маршрутом задача может задать вопрос: владельцу есть куда ответить.
+      variantsMode: request.route ? 'auto' : 'never',
+      freshSession: true,
+      rootTaskId: revision?.rootTaskId,
+      resultVersion: revision?.resultVersion ?? 1,
+      revisionOf: revision?.previousId,
+      revisionContext: revision ? { text: revision.previousText, files: revision.previousFiles } : undefined,
+    })
+    if (outcome?.conflict) {
+      const error = new Error(outcome.reason ?? 'ключ запроса уже связан с другой задачей')
+      error.code = 'CONFLICT'
+      throw error
+    }
+    if (outcome?.storageFailed) {
+      const error = new Error(outcome.reason ?? 'задача не сохранена')
+      error.code = 'STORAGE_FAILED'
+      throw error
+    }
+    if (!outcome?.queued) {
+      const error = new Error(outcome?.reason ?? 'задача не поставлена в очередь')
+      error.code = 'REFUSED'
+      throw error
+    }
+    return { taskId: outcome.taskId ?? id, duplicate: Boolean(outcome.duplicate), state: outcome.state ?? 'queued' }
+  }
+
+  /** Состояние задачи для GET /v1/tasks/:id. */
+  taskState(id) {
+    const record = this.journal?.get(id)
+    if (!record) return undefined
+    const deliveries = this.delivery?.store?.ofTask(id) ?? []
+    const last = deliveries[deliveries.length - 1]
+    const delivery = last
+      ? { state: last.state, target: last.channel, attempts: last.attempts ?? 0, outcome: last.outcome }
+      : { state: 'none', target: record.route ? 'assistant' : 'personal', attempts: 0 }
+    const question = record.status === STATUS.awaiting_owner
+      ? { text: String(record.question ?? ''), variants: record.variants ?? [] }
+      : null
+    return {
+      id: record.id,
+      execution: record.status,
+      delivery,
+      question,
+      result: record.resultSummary ?? null,
+      version: record.resultVersion ?? 1,
+      rootTaskId: record.rootTaskId ?? record.id,
+      revisionOf: record.revisionOf ?? null,
+      updatedAt: record.updatedAt ?? record.createdAt,
+    }
+  }
+
+  /**
+   * Ответ владельца на вопрос по контракту.
+   *
+   * Повтор с тем же requestId возвращает прежний ответ и не продолжает задачу
+   * второй раз; тот же ключ с другим телом — конфликт.
+   */
+  async replyTask(id, { requestId, text, variant } = {}) {
+    if (!this.journal) return undefined
+    const record = this.journal.get(id)
+    if (!record) return undefined
+    const hash = bodyHash({ text, variant })
+    const known = this.requests?.find('reply', requestId, hash)
+    if (known?.conflict) {
+      const error = new Error('тот же requestId с другим телом')
+      error.code = 'CONFLICT'
+      throw error
+    }
+    if (known?.record) return known.record.response ?? { taskId: id, state: record.status }
+    if (record.status !== STATUS.awaiting_owner) {
+      const error = new Error(`задача не ждёт ответа (${record.status})`)
+      error.code = 'BAD_STATE'
+      throw error
+    }
+    const stored = this.awaitingFor(record.chatId)
+    const awaiting = stored && stored.taskId === id
+      ? stored
+      : {
+        taskId: id,
+        sessionId: record.sessionId,
+        kind: (record.variants ?? []).length > 0 ? 'variant' : 'question',
+        question: record.question,
+        variants: record.variants,
+        brief: record.brief,
+      }
+    const chosen = variant === undefined ? undefined : (record.variants ?? []).find((item) => Number(item.n) === Number(variant))
+    const continuation = chosen
+      ? buildContinuation({ kind: 'variant', variant: chosen.text, text })
+      : buildContinuation({ kind: 'question', text })
+    await this.continueTask({
+      awaiting: { ...awaiting, taskId: id, sessionId: record.sessionId ?? awaiting.sessionId },
+      chatId: record.chatId,
+      userId: record.userId,
+      replyToMessageId: undefined,
+      continuation,
+    })
+    const response = { taskId: id, state: STATUS.queued }
+    await this.requests?.remember('reply', requestId, { taskId: id, hash, response })
+    return response
+  }
+
+  /** Отмена задачи по контракту; состояние отмены событием не дублируется. */
+  async cancelTaskById(id, { requestId } = {}) {
+    const record = this.journal?.get(id)
+    if (!record) return undefined
+    const hash = bodyHash({})
+    const known = this.requests?.find('cancel', requestId, hash)
+    if (known?.conflict) {
+      const error = new Error('тот же requestId с другим телом')
+      error.code = 'CONFLICT'
+      throw error
+    }
+    if (known?.record) return known.record.response ?? { taskId: id, state: record.status }
+    let state = record.status
+    if (!TERMINAL.has(record.status)) {
+      if (this.running?.id === id) {
+        this.running.controller?.abort()
+        state = STATUS.cancelled
+      } else if (record.status === STATUS.queued) {
+        this.queue = this.queue.filter((job) => job.id !== id)
+        await this.journal.update(id, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено по контракту' })
+        state = STATUS.cancelled
+      } else {
+        if (record.status === STATUS.awaiting_owner) await this.clearAwaiting(record.chatId)
+        await this.journal.update(id, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено по контракту' })
+        state = STATUS.cancelled
+      }
+    }
+    const response = { taskId: id, state }
+    await this.requests?.remember('cancel', requestId, { taskId: id, hash, response })
+    return response
+  }
+
+  /** Ручной повтор неуспешной доставки: задача заново не выполняется. */
+  async deliverAgain(args = '') {
+    const id = String(args ?? '').trim().split(/\s+/)[0]
+    if (id === '') return 'Укажите id: /deliver <id>.'
+    if (!this.delivery?.store) return 'Доставка недоступна.'
+    const failed = this.delivery.store.ofTask(id).filter((record) => record.state === 'failed')
+    if (failed.length === 0) return `У задачи ${id} нет неуспешных доставок.`
+    for (const record of failed) {
+      await this.delivery.store.retry(record.eventId)
+      await this.delivery.attempt(this.delivery.store.get(record.eventId))
+    }
+    return `🔁 Повторил доставку событий задачи ${id}: ${failed.length}.`
+  }
+
+  /** Уведомить владельца в личном чате, если доставка ассистенту не удалась. */
+  async notifyDeliveryFailure(record, error) {
+    const chatId = this.alertChatId()
+    if (chatId === undefined || !this.delivery) return
+    await this.delivery.enqueue({
+      contract: 2,
+      eventId: `${record.taskId}:failure:${record.eventId}`,
+      taskId: record.taskId,
+      type: 'delivery_failure',
+      createdAt: this.now().getTime(),
+      attempt: 1,
+      chatId,
+      text: `⚠️ Не удалось доставить результат задачи ${record.taskId}: ${String(error ?? 'неизвестная ошибка').slice(0, 200)}`,
+    }, { channel: 'personal' })
+  }
+
+  /** Вложения контракта: скопировать файлы из реестра в inbox рабочей папки. */
+  async materializeAttachments(job, dir) {
+    const files = []
+    const notes = []
+    for (const item of job.attachments ?? []) {
+      if (!/^f_[A-Za-z0-9]+$/.test(String(item?.fileId ?? ''))) continue
+      const result = await this.files?.read(item.fileId)
+      if (!result?.ok) {
+        notes.push(`файл «${item.name ?? item.fileId}» недоступен (${result?.error ?? 'нет реестра'})`)
+        continue
+      }
+      const name = String(item.name ?? result.record.name)
+      const safeName = name.replace(/[\\/]/g, '_')
+      const relPath = path.join('inbox', `${item.fileId}-${safeName}`)
+      await fs.writeFile(path.join(dir, relPath), result.bytes)
+      files.push({
+        name,
+        relPath,
+        size: result.bytes.length,
+        kind: item.kind ?? 'document',
+        mime: item.mime ?? result.record.mime,
+      })
+    }
+    return { files, notes, usage: {} }
+  }
+
+  /** Зарегистрировать файлы результата для события контракта. */
+  async registerResultFiles(job, outputs = { selected: [] }) {
+    if (!this.files) return []
+    const registered = []
+    for (const entry of outputs.selected) {
+      const file = await readDeliverable(entry, { maxBytes: this.config.workspace.maxOutputFileBytes })
+      if (file.error) continue
+      const record = await this.files.create({
+        bytes: file.bytes,
+        name: entry.relPath.split(path.sep).pop(),
+        mime: file.mime,
+        direction: 'result',
+      })
+      registered.push({
+        fileId: record.fileId,
+        name: record.name,
+        size: record.size,
+        mime: record.mime,
+        caption: `${entry.relPath} · ${formatSize(entry.size)}`,
+      })
+    }
+    return registered
+  }
+
+  /** Сводка доставки для отчёта и /task. */
+  deliverySummary(taskId) {
+    const records = this.delivery?.store?.ofTask(taskId) ?? []
+    const last = records[records.length - 1]
+    return last ? `${last.state}${last.attempts ? ` (попыток ${last.attempts})` : ''}` : 'нет'
+  }
+
   /** Run queued tasks one by one. */
+
   async drain() {
     if (this.stopping) return
     while (this.queue.length > 0 && !this.stopping) {
@@ -1734,18 +2037,21 @@ export class AgentBot {
       return
     }
 
-    const intake = await saveAttachments({
-      platform: this.platform,
-      attachments: job.attachments ?? [],
-      dir,
-      maxBytes: this.config.workspace.maxAttachmentBytes,
-      vision: this.vision,
-      ocr: this.ocr,
-      stt: this.stt,
-      sttMaxBytes: this.config.voice.stt.maxBytes,
-      logger: this.logger,
-      now: this.now,
-    })
+    const contractFiles = (job.attachments ?? []).some((item) => /^f_[A-Za-z0-9]+$/.test(String(item?.fileId ?? '')))
+    const intake = contractFiles
+      ? await this.materializeAttachments(job, dir)
+      : await saveAttachments({
+        platform: this.platform,
+        attachments: job.attachments ?? [],
+        dir,
+        maxBytes: this.config.workspace.maxAttachmentBytes,
+        vision: this.vision,
+        ocr: this.ocr,
+        stt: this.stt,
+        sttMaxBytes: this.config.voice.stt.maxBytes,
+        logger: this.logger,
+        now: this.now,
+      })
     // Reading images costs tokens too, and it happens before the run: count it
     // even if the task itself then fails or is cancelled.
     if ((intake.usage?.prompt_tokens ?? 0) + (intake.usage?.completion_tokens ?? 0) > 0) {
@@ -1764,8 +2070,18 @@ export class AgentBot {
     // keeps those runs from wandering (the expensive failure mode).
     const silentPlan = await this.maybePlanUnattended({ job })
 
+    const revisionNote = job.revisionContext
+      ? [
+        '',
+        'Это доработка ранее выданного результата. Изменяй только то, о чём просит владелец.',
+        `Прошлый запрос: ${String(job.revisionContext.text ?? '').slice(0, 1500)}`,
+        (job.revisionContext.files ?? []).length > 0
+          ? `Файлы прошлой версии: ${(job.revisionContext.files ?? []).map((file) => file.name).join(', ')}`
+          : 'Файлы прошлой версии недоступны — скажи об этом в отчёте.',
+      ].join('\n')
+      : ''
     const task = buildTaskPrompt({
-      text: job.text,
+      text: `${job.text}${revisionNote}`,
       files: intake.files,
       notes: intake.notes.map((note) => `проблема: ${note}`),
       memory: this.memory?.render() ?? '',
@@ -1812,7 +2128,8 @@ export class AgentBot {
     // markStatus и publishProgress молчат без messageId, поэтому достаточно не
     // отправлять стартовое сообщение; всё важное (проблемы вложений, пути на
     // Диске, стоимость) уходит одним итогом в конце.
-    const brief = this.config.report.style === 'brief'
+    const remote = Boolean(job.route)
+    const brief = this.config.report.style === 'brief' || remote
     job.issue = issue
 
     const status = brief ? undefined : await this.safeSend(job.chatId, [
@@ -1830,7 +2147,7 @@ export class AgentBot {
     if (quick) return quick
 
     // Big work gets a plan first: cheaper than a run that went the wrong way.
-    const planned = await this.parkForPlan({ job, statusMessageId })
+    const planned = remote ? undefined : await this.parkForPlan({ job, statusMessageId })
     if (planned) return planned
 
     const before = await snapshot(dir)
@@ -1957,12 +2274,15 @@ export class AgentBot {
       return
     }
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
-    await this.reportResult({ job, result, statusMessageId, diskPaths })
-    await this.sendOutputs({ job, outputs })
-    await this.sendVoiceAnswer({ job, result })
+    const resultFiles = job.route ? await this.registerResultFiles(job, outputs) : []
+    await this.reportResult({ job, result, statusMessageId, diskPaths, resultFiles })
+    if (!job.route) {
+      await this.sendOutputs({ job, outputs })
+      await this.sendVoiceAnswer({ job, result })
+    }
     await this.maybeWarnLimit()
     await this.maybeWarnWorkspace()
-    if (statusKind === STATUS.failed && String(job.chatId) !== String(this.alertChatId())) {
+    if (statusKind === STATUS.failed && !job.route && String(job.chatId) !== String(this.alertChatId())) {
       await this.alert(`⚠️ Задача ${job.id} завершилась неудачно (${statusKind}).`)
     }
   }
@@ -1984,6 +2304,25 @@ export class AgentBot {
       question: reply.question,
       brief: job.brief ?? String(job.text ?? '').slice(0, 200),
     })
+    if (job.route) {
+      const questionText = [
+        reply.answer === '' ? '' : reply.answer,
+        `❓ Вопрос по задаче ${job.id}:`,
+        reply.question,
+        '',
+        `_Ответьте через контракт: POST /v1/tasks/${job.id}/reply._`,
+      ].filter((part) => part !== '').join('\n')
+      await this.delivery?.enqueue(buildQuestionEvent({
+        task: { ...job, route: job.route },
+        text: questionText,
+        question: reply.question,
+        variants: [],
+        version: job.resultVersion ?? 1,
+        maxChars: this.config.delivery?.textChars ?? 3500,
+      }))
+      this.logger?.info('remote question queued', { taskId: job.id })
+      return
+    }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: `❓ Задача ${job.id}: жду ответа.` })
     // Files are sent before the question, so the question stays the last message.
     await this.sendOutputs({ job, outputs })
@@ -2021,6 +2360,27 @@ export class AgentBot {
       question: reply.question || undefined,
       brief: job.brief ?? String(job.text ?? '').slice(0, 200),
     })
+    if (job.route) {
+      const body = [
+        reply.answer === '' ? '' : reply.answer,
+        reply.question === '' ? '' : `❓ ${reply.question}`,
+        `🔀 По задаче ${job.id} есть варианты:`,
+        '',
+        ...reply.variants.map((variant) => `${variant.n}. ${variant.text}`),
+        '',
+        `_Ответьте через контракт: POST /v1/tasks/${job.id}/reply._`,
+      ].filter((part) => part !== '').join('\n')
+      await this.delivery?.enqueue(buildQuestionEvent({
+        task: { ...job, route: job.route },
+        text: body,
+        question: reply.question || '',
+        variants: reply.variants,
+        version: job.resultVersion ?? 1,
+        maxChars: this.config.delivery?.textChars ?? 3500,
+      }))
+      this.logger?.info('remote variants queued', { taskId: job.id, variants: reply.variants.length })
+      return
+    }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: `🔀 Задача ${job.id}: предложены варианты.` })
     await this.sendOutputs({ job, outputs })
     const body = [
@@ -2078,7 +2438,7 @@ export class AgentBot {
   }
 
   /** Answer text for the finished task. */
-  async reportResult({ job, result, statusMessageId, diskPaths = [] }) {
+  async reportResult({ job, result, statusMessageId, diskPaths = [], resultFiles = [] }) {
     // Текст ответа собирает домен delivery: ядро передаёт только данные и числа.
     const cost = costOf(result.usage, this.pricingOptions())
     const usdText = formatUsd(cost.usd)
@@ -2101,14 +2461,29 @@ export class AgentBot {
           },
     })
 
+    if (job.route) {
+      const summary = { text: String(result.text ?? '').trim(), files: resultFiles, version: job.resultVersion ?? 1 }
+      await this.journal?.update(job.id, { resultSummary: summary, resultFiles })
+      if (result.aborted || result.timedOut) return
+      await this.journal?.update(job.id, { resultSummary: summary, resultFiles })
+      await this.delivery?.enqueue(buildResultEvent({
+        task: { ...job, route: job.route },
+        text,
+        files: resultFiles,
+        version: job.resultVersion ?? 1,
+        maxChars: this.config.delivery?.textChars ?? 3500,
+      }))
+      return
+    }
     await this.markStatus({
       chatId: job.chatId,
       statusMessageId,
       markdown: statusMarkdown({ result, taskId: job.id, limits: this.config.limits }),
     })
-    await this.safeSend(job.chatId, text, {
+    const sent = await this.safeSend(job.chatId, text, {
       replyToMessageId: this.jobReplyTo(job),
     })
+    await this.delivery?.trackPersonal?.({ taskId: job.id, text, chatId: job.chatId, receipt: sent?.messageId })
     await this.mirrorResult(text, job.id)
   }
 

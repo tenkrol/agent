@@ -145,6 +145,15 @@ export function loadConfig(env = process.env) {
     recovery: {
       notify: boolean(read(env, 'RECOVERY_NOTIFY'), 'RECOVERY_NOTIFY'),
     },
+    delivery: {
+      tickMs: positiveInt(read(env, 'DELIVERY_TICK_MS'), 'DELIVERY_TICK_MS', { min: 1000, max: 600_000 }),
+      retryMs: String(read(env, 'DELIVERY_RETRY_MS')).split(',').map((value) => positiveInt(value.trim(), 'DELIVERY_RETRY_MS', { min: 1000, max: 86_400_000 })),
+      maxAttempts: positiveInt(read(env, 'DELIVERY_MAX_ATTEMPTS'), 'DELIVERY_MAX_ATTEMPTS', { min: 1, max: 100 }),
+      textChars: positiveInt(read(env, 'DELIVERY_TEXT_CHARS'), 'DELIVERY_TEXT_CHARS', { min: 200, max: 20_000 }),
+    },
+    files: {
+      maxBytes: positiveInt(read(env, 'FILES_MAX_BYTES'), 'FILES_MAX_BYTES', { min: 1024, max: 500_000_000 }),
+    },
     voice: {
       stt: {
         provider: choice(read(env, 'STT_PROVIDER'), 'STT_PROVIDER', ['none', 'yandex', 'openai'], 'none'),
@@ -177,6 +186,10 @@ export function loadConfig(env = process.env) {
     bridge: {
       // HTTP intake: enabled only when a token is set.
       http: boolean(read(env, 'BRIDGE_HTTP'), 'BRIDGE_HTTP'),
+      contractV2: boolean(read(env, 'CONTRACT_V2'), 'CONTRACT_V2'),
+      // Маршрут ответа принимается только от настроенного ассистента; пусто — любой.
+      routeBotId: String(env.BRIDGE_ROUTE_BOT_ID ?? '').trim(),
+      routeChatId: String(env.BRIDGE_ROUTE_CHAT_ID ?? '').trim(),
       bind: String(read(env, 'BRIDGE_BIND')).trim() || '127.0.0.1',
       port: positiveInt(read(env, 'BRIDGE_PORT'), 'BRIDGE_PORT', { min: 1, max: 65_535 }),
       token: String(env.BRIDGE_TOKEN ?? '').trim(),
