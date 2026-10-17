@@ -176,3 +176,35 @@ test('a retry forces the executor even for a trivial request', async () => {
     await env.close()
   }
 })
+
+test('the quick answer goes through the orchestrator and cancellation closes it as cancelled', async () => {
+  const env = await createBotHarness({ runner: { async run() { throw new Error('DSH не должен запускаться') } } })
+  try {
+    let started
+    const ready = new Promise((resolve) => { started = resolve })
+    env.bot.quick = {
+      enabled: true,
+      async answer({ signal }) {
+        started()
+        await new Promise((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', resolve, { once: true })
+        })
+        return { routed: 'quick', text: 'ответ', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 2 }, durationMs: 5 }
+      },
+    }
+    const handled = env.bot.handleUpdate({
+      kind: 'message', id: 3, chat: { id: 42, type: 'private' }, from: { id: 42, name: 'В', isBot: false },
+      text: 'сколько будет 17 умножить на 24', attachments: [], addressed: true, messageId: 7,
+    })
+    await ready
+    await env.bot.cancelAll(42)
+    await handled
+    await env.bot.worker
+    const record = env.journal.recent(1)[0]
+    assert.equal(record.status, 'cancelled')
+    assert.equal(record.quick, true)
+  } finally {
+    await env.close()
+  }
+})

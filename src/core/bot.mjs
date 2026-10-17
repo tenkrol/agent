@@ -132,7 +132,24 @@ export class AgentBot {
     this.orchestrator = orchestrator ?? createOrchestrator({
       // Адаптер читает this.runner на каждом запуске: тесты и переключение
       // исполнителя не должны требовать пересоздания бота.
-      executors: [createDshExecutor({ runner: { run: (request) => this.runner.run(request) } })],
+      executors: [
+        createDshExecutor({ runner: { run: (request) => this.runner.run(request) } }),
+        {
+          id: 'quick',
+          capabilities: ['quick'],
+          execute: async ({ task, signal }) => {
+            const quick = await this.quick.answer({ task, memory: this.memory?.render() ?? '', signal })
+            return {
+              ok: quick.routed === 'quick',
+              text: quick.text,
+              usage: quick.usage,
+              quick,
+              durationMs: quick.durationMs,
+              aborted: Boolean(signal?.aborted),
+            }
+          },
+        },
+      ],
       verifier,
       limits: {
         tokenLimit: config.limits.taskTokenBudget,
@@ -1322,38 +1339,52 @@ export class AgentBot {
   async tryQuickAnswer({ job, statusMessageId }) {
     if (!this.shouldTryQuick(job)) return undefined
     const controller = new AbortController()
-    this.running = { id: job.id, chatId: job.chatId, controller, startedAt: this.now().getTime(), steps: 0, tools: 0 }
-    let quick
+    this.running = {
+      id: job.id,
+      chatId: job.chatId,
+      controller,
+      startedAt: this.now().getTime(),
+      steps: 0,
+      tools: 0,
+      stage: 'executing',
+      attemptId: `${job.id}-quick`,
+    }
+    let outcome
     try {
-      quick = await this.quick.answer({
+      outcome = await this.orchestrator.run({
+        executorId: 'quick',
+        job,
         task: job.text,
-        memory: this.memory?.render() ?? '',
         signal: controller.signal,
+        stopping: this.stopping,
+        onStage: (stage) => {
+          if (this.running?.id === job.id) this.running.stage = stage
+        },
+        onUsage: (usage) => {
+          if ((usage?.totalTokens ?? 0) > 0) {
+            this.usage.record({
+              usage: toProviderUsage(usage),
+              userId: job.userId,
+              chatId: job.chatId,
+              date: this.now(),
+              timeZone: this.config.runtime.timeZone,
+            })
+          }
+        },
       })
     } finally {
       this.running = undefined
     }
-    if (quick.usage.totalTokens > 0) {
-      this.usage.record({
-        usage: toProviderUsage(quick.usage),
-        userId: job.userId,
-        chatId: job.chatId,
-        date: this.now(),
-        timeZone: this.config.runtime.timeZone,
-      })
-    }
-    this.logger?.info('quick layer decision', {
-      taskId: job.id,
-      routed: quick.routed,
-      tokens: quick.usage.totalTokens,
-      durationMs: quick.durationMs,
-      error: quick.error,
-    })
-    if (quick.routed !== 'quick') return undefined
+    const quick = outcome?.result?.quick
+    if (!quick || quick.routed !== 'quick') return undefined
 
     const cost = costOf(quick.usage, this.pricingOptions())
-    await this.journal?.update(job.id, {
-      status: STATUS.done,
+    const status = outcome.status === STATUS.cancelled || outcome.status === STATUS.interrupted
+      ? outcome.status
+      : outcome.status
+    await this.journal?.close(job.id, {
+      status,
+      reason: outcome.reason,
       quick: true,
       durationMs: quick.durationMs,
       steps: 1,
@@ -1365,8 +1396,11 @@ export class AgentBot {
       },
       usd: cost.usd,
       peak: cost.peak,
-      finishedAt: this.now().getTime(),
     })
+    if (status === STATUS.cancelled || status === STATUS.interrupted) {
+      this.logger?.info('quick answer cancelled', { taskId: job.id, status })
+      return { quick: true, cancelled: true, text: quick.text ?? '' }
+    }
     if (job.route) {
       const text = String(quick.text ?? '').trim()
       await this.journal?.update(job.id, { resultSummary: { text, files: [], version: job.resultVersion ?? 1 } })

@@ -8,7 +8,7 @@
 export function createModelClient({ baseUrl, apiKey, model, timeoutMs = 90_000, fetchImpl = globalThis.fetch } = {}) {
   return {
     enabled: Boolean(baseUrl && apiKey && model),
-    async askModel(prompt) {
+    async askModel(prompt, { signal } = {}) {
       if (!apiKey) throw new Error('модельный ключ не настроен')
       const response = await fetchImpl(`${String(baseUrl).replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
@@ -21,11 +21,18 @@ export function createModelClient({ baseUrl, apiKey, model, timeoutMs = 90_000, 
           // обрезали его на длинных ответах, и проверка честно уходила в unavailable.
           max_tokens: 800,
         }),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(`модель ответила ${response.status}`)
-      return String(payload?.choices?.[0]?.message?.content ?? '')
+      return {
+        text: String(payload?.choices?.[0]?.message?.content ?? ''),
+        usage: {
+          inputTokens: Number(payload?.usage?.prompt_tokens) || 0,
+          outputTokens: Number(payload?.usage?.completion_tokens) || 0,
+          totalTokens: Number(payload?.usage?.total_tokens) || 0,
+        },
+      }
     },
   }
 }

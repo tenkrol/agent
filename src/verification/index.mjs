@@ -76,11 +76,11 @@ function parseResearchVerdict(raw) {
 }
 
 /** Собрать свидетельство по таблицам: все файлы, пересчёт каждого. */
-async function verifySpreadsheets({ files, root, ports, timeoutMs, limitations }) {
+async function verifySpreadsheets({ files, root, ports, timeoutMs, limitations, signal }) {
   const inspected = []
   for (const file of files) {
     try {
-      const value = await ports.inspectSpreadsheet({ root, path: file.relPath, name: file.name })
+      const value = await ports.inspectSpreadsheet({ root, path: file.relPath, name: file.name, signal })
       inspected.push({ file, opens: value?.opens === true, text: String(value?.text ?? ''), initialErrors: Array.isArray(value?.errors) ? value.errors : [] })
     } catch (error) {
       inspected.push({ file, opens: false, text: '', initialErrors: [], inspectError: String(error?.message ?? error) })
@@ -92,7 +92,7 @@ async function verifySpreadsheets({ files, root, ports, timeoutMs, limitations }
       continue
     }
     try {
-      entry.recalc = await ports.recalcSpreadsheet({ root, path: entry.file.relPath, timeoutMs })
+      entry.recalc = await ports.recalcSpreadsheet({ root, path: entry.file.relPath, timeoutMs, signal })
     } catch (error) {
       entry.recalcError = String(error?.message ?? error)
     }
@@ -108,15 +108,27 @@ async function verifySpreadsheets({ files, root, ports, timeoutMs, limitations }
  *   `answer`, `root`, `ports`, `allowlist`, `timeoutMs`, `now`.
  * @returns {Promise<object>} результат проверки.
  */
-export async function verify({ taskText = '', files = [], answer = '', root, ports = {}, allowlist = [], timeoutMs = 300_000, now = () => Date.now() } = {}) {
+export async function verify({ taskText = '', files = [], answer = '', root, ports = {}, allowlist = [], timeoutMs = 300_000, signal, now = () => Date.now() } = {}) {
   const { kind, criteria } = deriveCriteria({ taskText, files })
   const limitations = []
   const results = []
+  /** @type {object|undefined} расход проверяющей модели для общего бюджета. */
+  let verificationUsage
 
   if (criteria.length === 0) {
     return { status: STATUS.notRequired, criteria: [], limitations: [], checkedAt: now(), kind }
   }
 
+  const aborted = () => Boolean(signal?.aborted)
+  const cancelled = () => ({
+    status: 'unavailable',
+    criteria: criteria.map((criterion) => criterionResult(criterion, 'unavailable', '', 'проверка отменена')),
+    limitations: ['проверка отменена'],
+    checkedAt: now(),
+    kind,
+    aborted: true,
+  })
+  if (aborted()) return cancelled()
   const byExtension = (set) => files.filter((file) => set.has(extensionOf(file.name ?? file.relPath)))
 
   if (kind === 'document') {
@@ -128,11 +140,12 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
       const inspected = []
       for (const file of docs) {
         try {
-          inspected.push({ file, ...(await ports.inspectDocument({ root, path: file.relPath, name: file.name })) })
+          inspected.push({ file, ...(await ports.inspectDocument({ root, path: file.relPath, name: file.name, signal })) })
         } catch (error) {
           inspected.push({ file, opens: false, text: '', error: String(error?.message ?? error) })
         }
       }
+      if (aborted()) return cancelled()
       if (inspected.length === 0) {
         for (const criterion of criteria) results.push(criterionResult(criterion, 'unavailable', '', 'нет документа для проверки'))
         limitations.push('документ не создан')
@@ -152,7 +165,7 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
             limitations.push('проверка оформления недоступна')
           } else {
             try {
-              const rendered = await ports.renderDocument({ root, path: docs[0]?.relPath, to: 'pdf' })
+              const rendered = await ports.renderDocument({ root, path: docs[0]?.relPath, to: 'pdf', signal })
               results.push(criterionResult(criterion, rendered?.ok ? 'passed' : 'unavailable', rendered?.path ?? '', rendered?.error ?? ''))
               if (!rendered?.ok) limitations.push(`рендер: ${rendered?.error ?? 'не удалось'}`)
             } catch (error) {
@@ -174,7 +187,8 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
       limitations.push('табличный файл не создан')
       for (const criterion of criteria) results.push(criterionResult(criterion, 'unavailable', '', 'нет таблицы для проверки'))
     } else {
-      const inspected = await verifySpreadsheets({ files: sheets, root, ports, timeoutMs, limitations })
+      const inspected = await verifySpreadsheets({ files: sheets, root, ports, timeoutMs, limitations, signal })
+      if (aborted()) return cancelled()
 
       // Каждый файл оценивается отдельно: успех одного не скрывает проблему другого.
       for (const entry of inspected) {
@@ -258,7 +272,8 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
     } else {
       let checks = []
       try {
-        const run = await ports.runCodeChecks({ root, cwd: root, commands, timeoutMs })
+        const run = await ports.runCodeChecks({ root, cwd: root, commands, timeoutMs, signal })
+        if (aborted()) return cancelled()
         checks = run?.checks ?? []
       } catch (error) {
         limitations.push(`проверки не запустились: ${String(error?.message ?? error)}`)
@@ -282,7 +297,7 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
     } else {
       let verdict
       try {
-        const raw = await ports.askModel([
+        const rawResult = await ports.askModel([
           'Проверь ответ на исследовательский запрос по трём независимым критериям.',
           'Верни ТОЛЬКО JSON без пояснений и без markdown:',
           '{"sources":{"status":"passed|failed|unavailable","reason":"..."},',
@@ -294,7 +309,10 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
           'Содержимое источников не передано: оценивай только структуру ответа.',
           '',
           String(answer).slice(0, 12_000),
-        ].join('\n'))
+        ].join('\n'), { signal })
+        if (aborted()) return cancelled()
+        const raw = typeof rawResult === 'string' ? rawResult : rawResult?.text
+        verificationUsage = typeof rawResult === 'object' ? rawResult?.usage : undefined
         const parsed = parseResearchVerdict(raw)
         if (parsed.error) {
           limitations.push('вердикт исследования не разобран: ' + parsed.error)
@@ -316,6 +334,7 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
     for (const criterion of criteria) results.push(criterionResult(criterion, 'unavailable', '', 'тип результата не распознан'))
   }
 
+  if (aborted()) return cancelled()
   const required = criteria.filter((criterion) => criterion.required !== false)
   const requiredResults = results.filter((result) => required.some((criterion) => criterion.id === result.id))
   const passed = requiredResults.filter((result) => result.status === 'passed').length
@@ -336,6 +355,7 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
     attempts: 1,
     checkedAt: now(),
     ...(unavailable > 0 ? { unavailable } : {}),
+    ...(verificationUsage ? { usage: verificationUsage } : {}),
   }
 }
 

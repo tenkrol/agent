@@ -105,10 +105,20 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
     const maxAttempts = Math.max(0, Number(verifier?.maxAttempts) || 0)
     const verifyResult = async () => {
       if (!verify) return undefined
+      const left = budget.remaining().timeMs
+      if (timeLimitMs > 0 && left <= 0) {
+        budgetBlocked = true
+        return undefined
+      }
+      // Проверка не должна жить дольше остатка времени задачи.
+      const verifySignal = timeLimitMs > 0
+        ? AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, left))])
+        : signal
       stage(STAGE.verifying)
       try {
-        const value = await verify({ result, signal, budget: budget.snapshot() })
+        const value = await verify({ result, signal: verifySignal, budget: budget.snapshot() })
         if (value?.usage) budget.consume(value.usage, { unknown: value.usage.totalTokens === undefined })
+        if (budget.exhausted()) budgetBlocked = true
         return value
       } catch (error) {
         logger?.warn?.('verification failed', { error: error?.message ?? error })
@@ -164,11 +174,29 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
         break
       }
       result = repair
+      if (parentAborted()) {
+        result = abortedResult(result)
+        stage(STAGE.cancelled)
+        return { result, verification, budget: budget.snapshot(), attempts, status: STAGE.cancelled, reason: 'cancelled', stages, startedAt }
+      }
       verification = await verifyResult()
+      if (parentAborted()) {
+        result = abortedResult(result)
+        stage(STAGE.cancelled)
+        return { result, verification, budget: budget.snapshot(), attempts, status: STAGE.cancelled, reason: 'cancelled', stages, startedAt }
+      }
       if (verification) verification.attempts = attempts + 1
     }
 
+    if (parentAborted()) {
+      result = abortedResult(result)
+      stage(STAGE.cancelled)
+      return { result, verification, budget: budget.snapshot(), attempts, status: STAGE.cancelled, reason: 'cancelled', stages, startedAt }
+    }
     let outcome = classifyOutcome({ result, verification, stopping })
+    if (budget.exhausted() && outcome.status === STAGE.done) {
+      outcome = { status: STAGE.partial, reason: budget.state.unknownCost ? 'unknown_budget' : 'budget' }
+    }
     if (budgetBlocked && !["cancelled", "interrupted", "failed"].includes(outcome.status)) {
       outcome = { status: STAGE.partial, reason: budget.state.unknownCost ? "unknown_budget" : "budget" }
     }

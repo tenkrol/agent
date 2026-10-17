@@ -39,7 +39,8 @@ const readBytes = async (root, relPath) => {
 }
 
 /** Открыть документ и вернуть текст. */
-export async function inspectDocument({ root, path: relPath, name } = {}) {
+export async function inspectDocument({ root, path: relPath, name, signal } = {}) {
+  if (signal?.aborted) return { opens: false, text: '', error: 'проверка отменена' }
   try {
     const { bytes } = await readBytes(root, relPath)
     const extracted = extractText({ fileName: name ?? relPath, bytes })
@@ -52,37 +53,45 @@ export async function inspectDocument({ root, path: relPath, name } = {}) {
 const FORMULA_ERROR = /#(?:REF|VALUE|DIV\/0|NAME|N\/A|NUM|NULL)!?/g
 
 /** Открыть таблицу, вернуть текст и найденные ошибки формул. */
-export async function inspectSpreadsheet({ root, path: relPath, name } = {}) {
-  const inspected = await inspectDocument({ root, path: relPath, name })
+export async function inspectSpreadsheet({ root, path: relPath, name, signal } = {}) {
+  if (signal?.aborted) return { opens: false, text: '', errors: [], error: 'проверка отменена' }
+  const inspected = await inspectDocument({ root, path: relPath, name, signal })
   return { ...inspected, errors: [...new Set(String(inspected.text ?? '').match(FORMULA_ERROR) ?? [])] }
 }
 
 /** Есть ли LibreOffice. */
-async function sofficeAvailable() {
+async function sofficeAvailable(signal) {
   return new Promise((resolve) => {
+    if (signal?.aborted) return resolve(false)
     const child = spawn('soffice', ['--version'], { stdio: 'ignore' })
+    const onAbort = () => { try { child.kill('SIGKILL') } catch {} ; resolve(false) }
+    signal?.addEventListener('abort', onAbort, { once: true })
     child.once('error', () => resolve(false))
-    child.once('exit', (code) => resolve(code === 0))
+    child.once('exit', (code) => { signal?.removeEventListener('abort', onAbort); resolve(code === 0) })
   })
 }
 
 /** Конвертировать файл во временный каталог через LibreOffice. */
-async function convert(root, relPath, target) {
-  if (!(await sofficeAvailable())) return { ok: false, error: 'LibreOffice недоступен' }
+async function convert(root, relPath, target, { signal } = {}) {
+  if (signal?.aborted) return { ok: false, error: 'проверка отменена' }
+  if (!(await sofficeAvailable(signal))) return { ok: false, error: signal?.aborted ? 'проверка отменена' : 'LibreOffice недоступен' }
   const source = await resolveInside(root, relPath)
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'verify-'))
   const args = ['--headless', '--convert-to', target, '--outdir', outDir, source]
   const result = await new Promise((resolve) => {
     const child = spawn('soffice', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const onAbort = () => { try { child.kill('SIGKILL') } catch { /* уже умер */ } }
+    signal?.addEventListener('abort', onAbort, { once: true })
     let stderr = ''
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
       resolve({ ok: false, error: 'таймаут LibreOffice' })
     }, 120_000)
     child.stderr.on('data', (chunk) => { stderr += chunk.toString().slice(0, 1000) })
-    child.once('error', (error) => { clearTimeout(timer); resolve({ ok: false, error: String(error.message ?? error) }) })
+    child.once('error', (error) => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); resolve({ ok: false, error: String(error.message ?? error) }) })
     child.once('exit', (code) => {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
       if (code !== 0) resolve({ ok: false, error: stderr || `код ${code}` })
       else resolve({ ok: true, dir: outDir })
     })
@@ -94,8 +103,8 @@ async function convert(root, relPath, target) {
 }
 
 /** Пересчитать таблицу (конвертация заставляет LibreOffice пересчитать формулы). */
-export async function recalcSpreadsheet({ root, path: relPath, name } = {}) {
-  const converted = await convert(root, relPath, 'xlsx')
+export async function recalcSpreadsheet({ root, path: relPath, name, signal } = {}) {
+  const converted = await convert(root, relPath, 'xlsx', { signal })
   if (!converted.ok) return { ok: false, opens: false, text: '', errors: [], error: converted.error }
   try {
     const bytes = await fs.readFile(converted.path)
@@ -112,7 +121,7 @@ export async function recalcSpreadsheet({ root, path: relPath, name } = {}) {
 }
 
 /** Отрендерить документ (PDF) для проверки отображения. */
-export async function renderDocument({ root, path: relPath } = {}) {
-  const converted = await convert(root, relPath, 'pdf')
+export async function renderDocument({ root, path: relPath, signal } = {}) {
+  const converted = await convert(root, relPath, 'pdf', { signal })
   return converted.ok ? { ok: true, path: converted.path } : { ok: false, error: converted.error }
 }

@@ -143,3 +143,37 @@ test('dsh adapter passes the remaining limits to the existing runner', async () 
   await executor.execute({ task: 'x', signal: undefined, id: 't-1', tokenBudget: 123, maxSteps: 4, timeoutMs: 5000 })
   assert.deepEqual(calls[0], { task: 'x', sessionId: undefined, signal: undefined, id: 't-1', tokenBudget: 123, maxSteps: 4, timeoutMs: 5000 })
 })
+
+test('cancel during the second verification never reports done', async () => {
+  const controller = new AbortController()
+  let verifyCalls = 0
+  const executor = { id: 'dsh', execute: async () => ({ ok: true, text: 'x', usage: usage(10) }) }
+  const orchestrator = createOrchestrator({
+    executors: [executor],
+    verifier: verifier(1),
+    limits: { tokenLimit: 10_000, maxSteps: 10, timeLimitMs: 10_000 },
+    verify: async () => {
+      verifyCalls += 1
+      if (verifyCalls === 1) return { status: 'failed', criteria: [{ id: 'sections', status: 'failed', evidence: 'нет' }] }
+      controller.abort()
+      return { status: 'passed', criteria: [] }
+    },
+  })
+  const outcome = await orchestrator.run({ job: { id: 't6', text: 'сделай' }, task: 'сделай', signal: controller.signal })
+  assert.equal(verifyCalls, 2)
+  assert.equal(outcome.status, STAGE.cancelled)
+})
+
+test('verification usage is charged and exhausting the budget blocks done', async () => {
+  const executor = { id: 'dsh', execute: async () => ({ ok: true, text: 'x', usage: usage(90) }) }
+  const orchestrator = createOrchestrator({
+    executors: [executor],
+    verifier: verifier(1),
+    limits: { tokenLimit: 100, maxSteps: 10, timeLimitMs: 10_000 },
+    verify: async () => ({ status: 'passed', criteria: [], usage: usage(20) }),
+  })
+  const outcome = await orchestrator.run({ job: { id: 't7', text: 'сделай' }, task: 'сделай', signal: new AbortController().signal })
+  assert.equal(outcome.budget.tokens, 110)
+  assert.notEqual(outcome.status, STAGE.done)
+  assert.equal(outcome.reason, 'budget')
+})

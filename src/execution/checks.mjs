@@ -16,7 +16,7 @@ async function insideRoot(root, cwd) {
   return !(relative.startsWith('..') || path.isAbsolute(relative))
 }
 
-const runOne = (argv, { cwd, timeoutMs }) => new Promise((resolve) => {
+const runOne = (argv, { cwd, timeoutMs, signal }) => new Promise((resolve) => {
   const started = Date.now()
   let stdout = ''
   let stderr = ''
@@ -25,6 +25,7 @@ const runOne = (argv, { cwd, timeoutMs }) => new Promise((resolve) => {
     if (settled) return
     settled = true
     clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
     resolve({
       command: argv.join(' '),
       exitCode,
@@ -41,6 +42,8 @@ const runOne = (argv, { cwd, timeoutMs }) => new Promise((resolve) => {
     finish(null, { error: String(error?.message ?? error) })
     return
   }
+  const onAbort = () => { try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch {} } finish(null, { error: 'проверка отменена', aborted: true }) }
+  signal?.addEventListener('abort', onAbort, { once: true })
   const timer = setTimeout(() => {
     try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch { /* уже умер */ } }
     finish(124, { error: 'таймаут проверки' })
@@ -57,7 +60,7 @@ const runOne = (argv, { cwd, timeoutMs }) => new Promise((resolve) => {
  * @param {object} input - `root`, `cwd`, `commands` (массив argv), `timeoutMs`.
  * @returns {Promise<{checks: object[]}>} результаты по каждой команде.
  */
-export async function runCodeChecks({ root, cwd = root, commands = [], timeoutMs = 300_000 } = {}) {
+export async function runCodeChecks({ root, cwd = root, commands = [], timeoutMs = 300_000, signal } = {}) {
   if (!Array.isArray(commands) || commands.length === 0) return { checks: [] }
   if (!(await insideRoot(root, cwd))) throw new Error('cwd вне рабочей папки задачи')
   const checks = []
@@ -67,7 +70,8 @@ export async function runCodeChecks({ root, cwd = root, commands = [], timeoutMs
       checks.push({ command: argv.join(' '), exitCode: null, stdout: '', stderr: '', error: 'пустая команда' })
       continue
     }
-    checks.push(await runOne(argv, { cwd, timeoutMs }))
+    if (signal?.aborted) break
+    checks.push(await runOne(argv, { cwd, timeoutMs, signal }))
   }
   return { checks }
 }

@@ -246,3 +246,38 @@ test('code checks never use a shell and reject cwd outside root', async () => {
     await cleanup(dir)
   }
 })
+
+test('an already cancelled signal stops verification before any port', async () => {
+  const controller = new AbortController()
+  controller.abort()
+  let calls = 0
+  const result = await verify({
+    taskText: 'исследуй рынок и укажи источники',
+    files: [],
+    answer: 'Источники: [1]',
+    signal: controller.signal,
+    ports: { askModel: async () => { calls += 1; return '{}' } },
+  })
+  assert.equal(calls, 0)
+  assert.notEqual(result.status, 'passed')
+  assert.ok(result.limitations.some((line) => /отменена/.test(line)))
+})
+
+test('verification model usage is returned for the shared budget', async () => {
+  const result = await verify({
+    taskText: 'исследуй рынок и укажи источники',
+    files: [],
+    answer: 'Источники: [1]',
+    ports: {
+      askModel: async () => ({
+        text: JSON.stringify({
+          sources: { status: 'passed', reason: 'есть' },
+          linkage: { status: 'passed', reason: 'есть' },
+          assumptions: { status: 'passed', reason: 'есть' },
+        }),
+        usage: { totalTokens: 21 },
+      }),
+    },
+  })
+  assert.equal(result.usage.totalTokens, 21)
+})
