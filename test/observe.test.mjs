@@ -12,7 +12,7 @@ import {
   renderReport,
   series,
   suggestThresholds,
-} from '../src/observe.mjs'
+} from '../src/autonomy/observe.mjs'
 import { createBotHarness } from './helpers.mjs'
 
 const BASE = 1_760_000_000

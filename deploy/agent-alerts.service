@@ -17,4 +17,4 @@ PrivateTmp=true
 NoNewPrivileges=true
 ReadWritePaths=/var/lib/agent
 # Путь к node установщик подставит сам (sed по этой строке).
-ExecStart=/usr/bin/node /opt/agent/src/alerts-cli.mjs
+ExecStart=/usr/bin/node /opt/agent/src/autonomy/alerts-cli.mjs

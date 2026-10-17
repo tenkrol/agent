@@ -13,9 +13,9 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { loadConfig } from './config/index.mjs'
+import { loadConfig } from '../config/index.mjs'
 import { AlertState, classifyErrors, DEFAULT_POLICY, evaluateTriggers, inQuietHours, minutesOfDay, parseQuietHours, renderAlert, renderDigest } from './alerts.mjs'
-import { sendTelegram } from './integrations/notify.mjs'
+import { sendTelegram } from '../integrations/notify.mjs'
 import { baseline, loadObservations, OBSERVATIONS_FILE, readiness } from './observe.mjs'
 
 const logger = {

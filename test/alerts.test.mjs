@@ -12,8 +12,8 @@ import {
   parseQuietHours,
   renderAlert,
   renderDigest,
-} from '../src/alerts.mjs'
-import { baseline } from '../src/observe.mjs'
+} from '../src/autonomy/alerts.mjs'
+import { baseline } from '../src/autonomy/observe.mjs'
 import { createBotHarness } from './helpers.mjs'
 
 const BASE = 1_760_000_000

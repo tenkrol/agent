@@ -183,7 +183,7 @@ sed -i "s|^ExecStart=.*|ExecStart=/etc/agent/metrics-collect.sh|" /etc/systemd/s
 install -m 0644 "$RELEASE_DIR/deploy/agent-alerts.service" /etc/systemd/system/agent-alerts.service
 install -m 0644 "$RELEASE_DIR/deploy/agent-alerts.timer" /etc/systemd/system/agent-alerts.timer
 NODE_BIN=$(command -v node || echo /usr/bin/node)
-sed -i "s|^ExecStart=.*|ExecStart=$NODE_BIN /opt/agent/src/alerts-cli.mjs|" /etc/systemd/system/agent-alerts.service
+sed -i "s|^ExecStart=.*|ExecStart=$NODE_BIN /opt/agent/src/autonomy/alerts-cli.mjs|" /etc/systemd/system/agent-alerts.service
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null
