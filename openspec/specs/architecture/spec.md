@@ -9,7 +9,8 @@
 | Домен | Ответственность | Куда migrates из |
 |---|---|---|
 | `core` | приём сообщений, доступ владельца, маршрутизация, очередь задач, команды, сессии диалога | `src/bot.mjs` |
-| `execution` | исполнение задачи: запуск DSH, cgroup, сборка промпта, разбор ответа, быстрый слой, рабочая папка задачи | `src/dsh-task.mjs`, `src/cgroup.mjs`, `src/prompt.mjs`, `src/reply-protocol.mjs`, `src/quick.mjs`, `src/workspace.mjs` |
+| `orchestration` | жизненный цикл задачи, стадии, общий бюджет, реестр исполнителей | PLA-19 |
+| `agents` | адаптеры исполнителей (DSH) к контракту оркестратора | PLA-19 || `execution` | исполнение задачи: запуск DSH, cgroup, сборка промпта, разбор ответа, быстрый слой, рабочая папка задачи | `src/dsh-task.mjs`, `src/cgroup.mjs`, `src/prompt.mjs`, `src/reply-protocol.mjs`, `src/quick.mjs`, `src/workspace.mjs` |
 | `tools` | инструменты агента: вложения, распознавание (vision, OCR), извлечение данных, офисные документы, голос | `src/inbox.mjs`, `src/vision.mjs`, `src/ocr.mjs`, `src/extract.mjs`, `src/stt.mjs`, `src/tts.mjs` |
 | `integrations` | внешние подключения: Telegram, Яндекс.Диск, модель, SpeechKit, HTTP-приём моста, туннели | `src/telegram.mjs`, `src/platform.mjs`, `src/yandex-disk.mjs`, `deploy/setup-bridge-tunnel.sh`, `deploy/setup-outbox.sh` |
 | `config` | настройки и политика: чтение и валидация окружения, лимиты, таймауты, режимы | `src/config.mjs` |
@@ -50,27 +51,15 @@
 - AND тесты доменов проходят без сети
 
 ### Requirement: Направление зависимостей
-Разрешено: `core → execution → tools → integrations`, `delivery → integrations`,
-`autonomy → storage`, `bot-link → integrations`, все домены → `config`. Дополнительно
-`storage`, `execution` и `core` МОГУТ использовать связанный read-only guard-порт домена
-`secrets` (`contains`, `redact`) для проверки текста на значения секретов; это единственное
-разрешённое направление в `secrets` помимо `ops` и `config`. Guard-порт создаётся в точке
-сборки из значений `config`; домены получают уже связанный порт и НЕ получают доступа к
-значениям секретов, шифртексту, файлам секретов и `process.env`. Guard сам окружение не
-читает. Обратные зависимости (например, `integrations → core`) запрещены; циклические —
-запрещены.
+Разрешено: `core → orchestration → execution → tools → integrations`, `orchestration →
+verification`, `agents → execution`, `delivery → integrations`, `autonomy → storage`,
+`bot-link → integrations`, все домены → `config`. `orchestration` НЕ ДОЛЖЕН импортировать
+Telegram, HTTP, GitHub и `core/bot.mjs`. Обратные зависимости запрещены.
 
-#### Scenario: Импорт «назад»
-- GIVEN агент хочет из `integrations` импортировать функцию из `core`
-- WHEN это происходит
-- THEN правило нарушено: нужная функция переносится в общий домен (`tools`, `storage`)
-  или в порт
-
-#### Scenario: Guard секретов
-- GIVEN `storage`, `execution` или `core` проверяет текст на секреты
-- WHEN используется guard-порт из `secrets`
-- THEN значения приходят из `config` аргументами
-- AND домен не читает шифртекст, файлы секретов и `process.env`
+#### Scenario: Новая стадия
+- GIVEN нужна проверка или исправление
+- WHEN выбирается место правила
+- THEN оно живёт в `orchestration`, а не в `core/bot.mjs` или `integrations`.
 
 ### Requirement: Настройки читаются один раз
 `config` ДОЛЖЕН один раз прочитать окружение, провалидировать значения и отдать
