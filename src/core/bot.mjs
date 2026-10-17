@@ -1928,11 +1928,18 @@ export class AgentBot {
       return
     }
 
-    const statusKind = result.aborted
-      ? STATUS.cancelled
-      : result.ok && !result.timedOut ? STATUS.done : STATUS.failed
-    const reason = result.aborted
-      ? 'cancelled'
+    // Остановка сервиса — не отмена владельцем: задача должна пережить рестарт
+    // как прерванная и не считаться завершённой.
+    const stoppedByShutdown = this.stopping && result.aborted
+    const statusKind = stoppedByShutdown
+      ? STATUS.interrupted
+      : result.aborted
+        ? STATUS.cancelled
+        : result.ok && !result.timedOut ? STATUS.done : STATUS.failed
+    const reason = stoppedByShutdown
+      ? 'перезапуск сервиса'
+      : result.aborted
+        ? 'cancelled'
       : result.timedOut
         ? 'timeout'
         : result.budgetExceeded
@@ -1945,6 +1952,10 @@ export class AgentBot {
       reason,
       error: result.ok || result.aborted ? undefined : (result.stderr?.slice(-300) || `код ${result.exitCode}`),
     })
+    if (stoppedByShutdown) {
+      this.logger?.info('task interrupted by shutdown', { taskId: job.id })
+      return
+    }
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
     await this.reportResult({ job, result, statusMessageId, diskPaths })
     await this.sendOutputs({ job, outputs })

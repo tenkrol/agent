@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
-import { STATUS } from '../src/storage/tasks.mjs'
+import { STATUS, TaskJournal } from '../src/storage/tasks.mjs'
 import { createBotHarness, createTestLogger } from './helpers.mjs'
 
 test('accepted tasks survive a restart and run in their original order', async () => {
@@ -154,6 +154,44 @@ test('the bridge passes requestId and maps storage conflicts to HTTP codes', asy
     const first = await env.bot.submitBridgedTask({ task: 'задача', requestId: 'same' })
     assert.ok(first.taskId)
     assert.equal(env.journal.get(first.taskId).requestKey, 'http:same')
+  } finally {
+    await env.close()
+  }
+})
+
+test('a task stopped by service shutdown stays interrupted for the next start', async () => {
+  const env = await createBotHarness({
+    runner: {
+      async run({ signal }) {
+        await new Promise((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', resolve, { once: true })
+        })
+        return {
+          ok: false,
+          aborted: true,
+          exitCode: null,
+          timedOut: false,
+          text: '',
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, steps: 0 },
+          tools: [],
+          errors: [],
+          stderr: '',
+          durationMs: 5,
+        }
+      },
+    },
+  })
+  try {
+    const { taskId } = await env.bot.submitBridgedTask({ task: 'долгая задача' })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await env.bot.stop()
+    const reloaded = await new TaskJournal({
+      file: env.journal.file,
+      logger: createTestLogger(),
+    }).load()
+    assert.equal(reloaded.get(taskId).status, STATUS.interrupted)
+    assert.equal(reloaded.get(taskId).reason, 'перезапуск сервиса')
   } finally {
     await env.close()
   }
