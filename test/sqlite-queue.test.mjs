@@ -1,0 +1,73 @@
+/**
+ * Примитивы транзакционной очереди (PLA-20): аренда, поколение, восстановление.
+ */
+import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { test } from 'node:test'
+import { SqliteTaskQueue } from '../src/storage/sqlite-queue.mjs'
+
+const withQueue = async (fn) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'queue-test-'))
+  const queue = new SqliteTaskQueue({ file: path.join(dir, 'queue.db') })
+  try {
+    await fn(queue)
+  } finally {
+    queue.close()
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+}
+
+test('two claimants get exactly one task and a repeated request returns the same task', async () => {
+  await withQueue(async (queue) => {
+    const first = queue.enqueue({ id: 't1', requestKey: 'r1', payload: { text: 'x' }, now: 1000 })
+    const again = queue.enqueue({ id: 't2', requestKey: 'r1', payload: { text: 'y' }, now: 1001 })
+    assert.equal(first.id, 't1')
+    assert.equal(again.id, 't1')
+
+    const one = queue.claim({ owner: 'w1', ttlMs: 60_000, now: 2000 })
+    assert.equal(one.id, 't1')
+    assert.equal(one.generation, 1)
+    const two = queue.claim({ owner: 'w2', ttlMs: 60_000, now: 2000 })
+    assert.equal(two, undefined)
+  })
+})
+
+test('heartbeat extends the lease and only the owning attempt can complete', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 't1', now: 1000 })
+    const claim = queue.claim({ owner: 'w1', ttlMs: 100, now: 1000 })
+    assert.equal(queue.heartbeat({ taskId: 't1', generation: claim.generation, owner: 'w1', ttlMs: 1000, now: 1050 }), true)
+    assert.equal(queue.heartbeat({ taskId: 't1', generation: claim.generation, owner: 'w2', ttlMs: 1000, now: 1050 }), false)
+    assert.deepEqual(queue.complete({ taskId: 't1', generation: claim.generation + 1, status: 'done', now: 1100 }), { ok: false, stale: true })
+    assert.deepEqual(queue.complete({ taskId: 't1', generation: claim.generation, status: 'done', now: 1100 }), { ok: true, stale: false })
+    assert.equal(queue.get('t1').status, 'done')
+  })
+})
+
+test('an expired lease is recovered and the old generation cannot finish', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 't1', now: 1000 })
+    const first = queue.claim({ owner: 'w1', ttlMs: 50, now: 1000 })
+    const second = queue.claim({ owner: 'w2', ttlMs: 100, now: 2000 })
+    assert.equal(second.id, 't1')
+    assert.equal(second.generation, first.generation + 1)
+    assert.equal(queue.complete({ taskId: 't1', generation: first.generation, status: 'failed', now: 2100 }).stale, true)
+    assert.equal(queue.get('t1').status, 'running')
+    assert.equal(queue.complete({ taskId: 't1', generation: second.generation, status: 'done', now: 2100 }).ok, true)
+  })
+})
+
+test('recoverExpired requeues a lost attempt and marks it lost', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 't1', now: 1000 })
+    const claim = queue.claim({ owner: 'w1', ttlMs: 10, now: 1000 })
+    assert.equal(queue.recoverExpired({ now: 2000 }), 1)
+    assert.equal(queue.get('t1').status, 'queued')
+    const attempt = queue.attempts('t1').find((row) => row.generation === claim.generation)
+    assert.equal(attempt.status, 'lost')
+    const next = queue.claim({ owner: 'w2', now: 2000 })
+    assert.equal(next.generation, claim.generation + 1)
+  })
+})
