@@ -1832,6 +1832,7 @@ export class AgentBot {
       delivery,
       question,
       result: record.resultSummary ?? null,
+      verification: record.verification ?? null,
       version: record.resultVersion ?? 1,
       rootTaskId: record.rootTaskId ?? record.id,
       revisionOf: record.revisionOf ?? null,

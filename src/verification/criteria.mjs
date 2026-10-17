@@ -43,7 +43,11 @@ export function sectionsFrom(taskText = '') {
     const tail = match[1].replace(/^(есть|должны быть|нужны|с)\s+/i, '')
     for (const part of tail.split(/[,;]|\s+и\s+/i)) {
       const clean = part.replace(/[«»"']/g, '').trim().toLowerCase()
-      if (clean.length >= 2 && clean.length <= 40 && !/^(и|или)$/.test(clean)) found.add(clean)
+      // Раздел — это короткое имя (обычно одно-два слова), а не фраза-описание.
+      const words = clean.split(/\s+/).filter(Boolean)
+      if (clean.length >= 2 && clean.length <= 25 && words.length <= 2 && !/^(и|или|текст|файл|документ)$/.test(clean)) {
+        found.add(clean)
+      }
     }
   }
   return [...found]
