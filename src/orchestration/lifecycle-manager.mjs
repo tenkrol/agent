@@ -5,7 +5,7 @@
  * меняется. AgentBot делегирует сюда очередь и завершение, а сам остаётся
  * адаптером входа и доставки.
  */
-export function createTaskLifecycle({ journal, stateStore, now = () => Date.now() } = {}) {
+export function createTaskLifecycle({ journal, stateStore, queueStore, now = () => Date.now() } = {}) {
   const state = { queue: [], running: undefined }
 
   return {
@@ -34,8 +34,10 @@ export function createTaskLifecycle({ journal, stateStore, now = () => Date.now(
       }
     },
 
+    /** Поставить задачу: при SQLite — транзакционно, память остаётся для статуса. */
     enqueue(job) {
       state.queue.push(job)
+      queueStore?.enqueue({ id: job.id, requestKey: job.requestKey, payload: job })
       return state.queue.length
     },
 
@@ -67,6 +69,7 @@ export function createTaskLifecycle({ journal, stateStore, now = () => Date.now(
     async retry({ taskId, job, reason, patch } = {}) {
       if (journal) await journal.requeue(taskId, { reason, patch })
       state.queue.push(job)
+      queueStore?.enqueue({ id: job.id, requestKey: job.requestKey, payload: job })
       return state.queue.length
     },
 
@@ -74,6 +77,7 @@ export function createTaskLifecycle({ journal, stateStore, now = () => Date.now(
     cancelQueued(id) {
       const before = state.queue.length
       state.queue = state.queue.filter((job) => job.id !== id)
+      queueStore?.cancel({ taskId: id })
       return before - state.queue.length
     },
 
@@ -109,17 +113,51 @@ export function createTaskLifecycle({ journal, stateStore, now = () => Date.now(
       return queued.length
     },
 
-    /** Единый цикл очереди: ошибку обрабатывает адаптер входа. */
-    async drain({ runTask, onError, isStopping = () => false } = {}) {
-      while (state.queue.length > 0 && !isStopping()) {
-        const job = state.queue.shift()
-        try {
-          await runTask(job)
-        } catch (error) {
-          if (onError) await onError(job, error)
-          else throw error
+    /**
+     * Единый цикл очереди: ошибку обрабатывает адаптер входа.
+     *
+     * С SQLite каждый worker захватывает задачу через аренду; при workers>1
+     * циклы идут параллельно, а повторный захват той же задачи невозможен.
+     */
+    async drain({ runTask, onError, isStopping = () => false, workers = 1, owner = `worker-${process.pid}`, leaseTtlMs = 60_000 } = {}) {
+      const count = Math.max(1, Number(workers) || 1)
+      const one = async (workerId) => {
+        while (!isStopping()) {
+          let job
+          let lease
+          if (queueStore) {
+            lease = queueStore.claim({ owner: workerId, ttlMs: leaseTtlMs, now: now() })
+            if (!lease) break
+            job = lease.payload
+            state.queue = state.queue.filter((item) => item.id !== lease.id)
+          } else {
+            if (state.queue.length === 0) break
+            job = state.queue.shift()
+          }
+          const heartbeat = lease
+            ? setInterval(() => queueStore.heartbeat({ taskId: lease.id, generation: lease.generation, owner: workerId, ttlMs: leaseTtlMs, now: now() }), Math.max(1000, Math.floor(leaseTtlMs / 3)))
+            : undefined
+          heartbeat?.unref?.()
+          try {
+            await runTask(job)
+            if (lease) {
+              const status = journal?.get?.(lease.id)?.status
+              if (status === 'awaiting_owner' || status === 'queued') {
+                queueStore.setStatus({ taskId: lease.id, generation: lease.generation, status, now: now() })
+              } else {
+                queueStore.complete({ taskId: lease.id, generation: lease.generation, status: status ?? 'done', now: now() })
+              }
+            }
+          } catch (error) {
+            if (lease) queueStore.complete({ taskId: lease.id, generation: lease.generation, status: 'failed', now: now() })
+            if (onError) await onError(job, error)
+            else throw error
+          } finally {
+            clearInterval(heartbeat)
+          }
         }
       }
+      await Promise.all(Array.from({ length: count }, (_, index) => one(`${owner}-${index + 1}`)))
     },
 
     /** Восстановить очередь и awaiting из журнала; interrupted не запускаются. */
@@ -128,6 +166,12 @@ export function createTaskLifecycle({ journal, stateStore, now = () => Date.now(
       await actions?.recover?.()
       const pending = journal ? journal.pending() : []
       state.queue = pending.map((record) => recordToJob(record))
+      if (queueStore) {
+        queueStore.recoverExpired({ now: now() })
+        for (const job of state.queue) {
+          queueStore.enqueue({ id: job.id, requestKey: job.requestKey, payload: job })
+        }
+      }
       if (journal) {
         for (const record of interrupted) {
           try {

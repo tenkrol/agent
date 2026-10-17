@@ -78,6 +78,12 @@ export function loadConfig(env = process.env) {
       taskTokenWarn: positiveInt(read(env, 'TASK_TOKEN_WARN'), 'TASK_TOKEN_WARN', { min: 0, max: 1_000_000_000, allowZero: true }),
       taskMaxSteps: positiveInt(read(env, 'TASK_MAX_STEPS'), 'TASK_MAX_STEPS', { min: 0, max: 500, allowZero: true }),
     },
+    queue: {
+      store: choice(read(env, 'QUEUE_STORE'), 'QUEUE_STORE', ['jsonl', 'sqlite'], 'jsonl'),
+      db: String(read(env, 'QUEUE_DB') ?? '').trim(),
+      workers: positiveInt(read(env, 'QUEUE_WORKERS'), 'QUEUE_WORKERS', { min: 1, max: 4 }),
+      leaseTtlMs: positiveInt(read(env, 'QUEUE_LEASE_TTL_MS'), 'QUEUE_LEASE_TTL_MS', { min: 1000, max: 3_600_000 }),
+    },
     task: {
       cgroup: boolean(read(env, 'TASK_CGROUP'), 'TASK_CGROUP'),
       memoryMaxBytes: positiveInt(read(env, 'TASK_MEMORY_MAX_MB'), 'TASK_MEMORY_MAX_MB', { min: 128, max: 65_536 }) * 1024 * 1024,

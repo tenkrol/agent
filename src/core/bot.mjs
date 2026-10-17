@@ -44,6 +44,7 @@ import { createOrchestrator } from '../orchestration/orchestrator.mjs'
 import { createBudget, minLimit } from '../orchestration/budget.mjs'
 import { createDshExecutor } from '../agents/dsh/index.mjs'
 import { createTaskLifecycle } from '../orchestration/lifecycle-manager.mjs'
+import { SqliteTaskQueue } from '../storage/sqlite-queue.mjs'
 import { buildQuestionEvent, buildResultEvent } from '../bot-link/events.mjs'
 import { dayKey } from '../storage/usage.mjs'
 import {
@@ -182,7 +183,16 @@ export class AgentBot {
     this.instructionsPath = instructionsPath
     this.now = now
     // Очередь, восстановление, awaiting и завершение принадлежат lifecycle.
-    this.lifecycle = createTaskLifecycle({ journal, stateStore: state, now: () => this.now().getTime() })
+    // SQLite включается только явно: по умолчанию остаётся проверенный JSONL.
+    const queueStore = config.queue?.store === 'sqlite'
+      ? new SqliteTaskQueue({
+        file: config.queue.db || path.join(config.workspace.stateDir, 'queue.db'),
+        logger,
+        now: () => this.now().getTime(),
+      })
+      : undefined
+    this.queueStore = queueStore
+    this.lifecycle = createTaskLifecycle({ journal, stateStore: state, queueStore, now: () => this.now().getTime() })
 
     /** @type {Map<string, number>} last "access denied" notice per chat. */
     this.deniedAt = new Map()
@@ -2296,6 +2306,8 @@ export class AgentBot {
     return this.lifecycle.drain({
       runTask: (job) => this.executeTask(job),
       isStopping: () => this.stopping,
+      workers: this.config.queue?.workers ?? 1,
+      leaseTtlMs: this.config.queue?.leaseTtlMs ?? 60_000,
       onError: async (job, error) => {
         this.logger?.error('task execution failed', { taskId: job.id, error })
         await this.failTask(job.id, { reason: 'internal', error: String(error?.message ?? error).slice(0, 300) })

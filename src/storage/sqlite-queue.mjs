@@ -162,6 +162,23 @@ export class SqliteTaskQueue {
     return rows.length
   }
 
+  /** Сменить статус без терминального завершения (парковка вопроса/плана). */
+  setStatus({ taskId, generation, status, now = this.now() } = {}) {
+    const result = this.db.prepare('UPDATE tasks SET status = ?, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE id = ? AND generation = ?')
+      .run(status, now, taskId, generation)
+    return result.changes > 0
+  }
+
+  /** Сколько задач ожидает в очереди. */
+  count() {
+    return Number(this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE status = 'queued'").get().n) || 0
+  }
+
+  /** Снять задачу из очереди (отмена до запуска). */
+  cancel({ taskId, now = this.now() } = {}) {
+    return this.db.prepare("UPDATE tasks SET status = 'cancelled', lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE id = ? AND status = 'queued'").run(now, taskId).changes > 0
+  }
+
   get(id) {
     return this.#row(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id))
   }
