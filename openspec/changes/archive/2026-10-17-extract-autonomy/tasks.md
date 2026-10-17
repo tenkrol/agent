@@ -13,8 +13,8 @@
 - [x] 3.2 Полный прогон: 325 тестов зелёные
 
 ## 4. Деплой и проверка
-- [ ] 4.1 `deploy/install-remote.sh`, таймеры active, `/observe` и аудит алертов живы
+- [x] 4.1 Задеплоено: сервис active, agent-alerts success, аудит пишется
 
 ## 5. Закрытие
-- [ ] 5.1 Дельта влита в `openspec/specs/autonomy/spec.md`
-- [ ] 5.2 `HANDOFF.md` обновлён, изменение заархивировано
+- [x] 5.1 Дельта влита в `openspec/specs/autonomy/spec.md`
+- [x] 5.2 `HANDOFF.md` обновлён, изменение заархивировано
