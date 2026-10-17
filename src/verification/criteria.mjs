@@ -81,7 +81,8 @@ export function deriveCriteria({ taskText = '', files = [] } = {}) {
   } else if (kind === 'code') {
     add({ id: 'checks', text: 'подходящие проверки кода выполнены', kind: 'checks', source: 'минимальная проверка типа' })
   } else if (kind === 'research') {
-    add({ id: 'sources', text: 'выводы связаны с источниками', kind: 'sources', source: 'минимальная проверка типа' })
+    add({ id: 'sources', text: 'в ответе есть источники', kind: 'sources', source: 'минимальная проверка типа' })
+    add({ id: 'linkage', text: 'выводы связаны с источниками', kind: 'sources', source: 'минимальная проверка типа' })
     add({ id: 'assumptions', text: 'предположения отделены от подтверждённых сведений', kind: 'sources', source: 'минимальная проверка типа' })
   }
 

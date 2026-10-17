@@ -72,6 +72,73 @@ test('a spreadsheet fails on formula errors', async () => {
   assert.equal(result.criteria.find((criterion) => criterion.id === 'computation').status, 'failed')
 })
 
+test('unavailable spreadsheet recalculation is unavailable, not passed', async () => {
+  const files = [{ name: 'смета.xlsx', relPath: 'outbox/смета.xlsx' }]
+  const unavailable = await verify({
+    taskText: 'сделай смету в xlsx',
+    files,
+    ports: {
+      inspectSpreadsheet: async () => ({ opens: true, text: 'Итого 100', errors: [] }),
+      recalcSpreadsheet: async () => ({ ok: false, opens: false, text: '', errors: [], error: 'LibreOffice недоступен' }),
+    },
+  })
+  assert.notEqual(unavailable.status, 'passed')
+  const computation = unavailable.criteria.find((criterion) => criterion.id === 'computation')
+  assert.equal(computation.status, 'unavailable')
+  assert.match(computation.evidence, /LibreOffice недоступен/)
+  assert.ok(unavailable.limitations.some((line) => /пересчёт не подтверждён/.test(line)))
+
+  const thrown = await verify({
+    taskText: 'сделай смету в xlsx',
+    files,
+    ports: {
+      inspectSpreadsheet: async () => ({ opens: true, text: 'Итого 100' }),
+      recalcSpreadsheet: async () => { throw new Error('таймаут') },
+    },
+  })
+  assert.notEqual(thrown.status, 'passed')
+  assert.equal(thrown.criteria.find((criterion) => criterion.id === 'computation').status, 'unavailable')
+})
+
+test('detected formula errors survive unavailable recalculation', async () => {
+  const files = [{ name: 'смета.xlsx', relPath: 'outbox/смета.xlsx' }]
+  const result = await verify({
+    taskText: 'сделай смету в xlsx',
+    files,
+    ports: {
+      inspectSpreadsheet: async () => ({ opens: true, text: 'Итого #REF!', errors: ['#REF!'] }),
+      recalcSpreadsheet: async () => ({ ok: false, text: '', errors: [], error: 'нет LibreOffice' }),
+    },
+  })
+  assert.notEqual(result.status, 'passed')
+  const computation = result.criteria.find((criterion) => criterion.id === 'computation')
+  assert.equal(computation.status, 'unavailable')
+  assert.ok(result.limitations.some((line) => /#REF!/.test(line)))
+  assert.equal(result.limitations.some((line) => /ошибок формул не найдены/.test(line)), false)
+})
+
+test('every spreadsheet is checked and a broken second file fails the result', async () => {
+  const files = [
+    { name: 'итоги.xlsx', relPath: 'outbox/итоги.xlsx' },
+    { name: 'риски.xlsx', relPath: 'outbox/риски.xlsx' },
+  ]
+  const result = await verify({
+    taskText: 'сделай две таблицы в xlsx',
+    files,
+    ports: {
+      inspectSpreadsheet: async ({ name }) => (name === 'риски.xlsx'
+        ? { opens: false, text: '', error: 'битый файл' }
+        : { opens: true, text: 'Итого 100' }),
+      recalcSpreadsheet: async ({ path: rel }) => (rel.endsWith('риски.xlsx')
+        ? { ok: false, opens: false, text: '', errors: [], error: 'не открылся' }
+        : { ok: true, opens: true, text: 'Итого 100', errors: [] }),
+    },
+  })
+  assert.notEqual(result.status, 'passed')
+  assert.equal(result.criteria.find((criterion) => criterion.id === 'opens').status, 'failed')
+  assert.match(result.criteria.find((criterion) => criterion.id === 'opens').evidence, /риски\.xlsx/)
+})
+
 test('code checks use the allowlist and empty allowlist is unavailable', async () => {
   const files = [{ name: 'fix.mjs', relPath: 'fix.mjs' }]
   const ports = { runCodeChecks: async () => ({ checks: [{ command: 'node --test', exitCode: 0 }] }) }
@@ -90,13 +157,56 @@ test('code checks use the allowlist and empty allowlist is unavailable', async (
   assert.equal(unavailable.status, 'unavailable')
 })
 
-test('research requires sources and separates assumptions', async () => {
+const researchVerdict = (statuses = {}) => JSON.stringify({
+  sources: { status: statuses.sources ?? 'passed', reason: 'ссылки есть' },
+  linkage: { status: statuses.linkage ?? 'passed', reason: 'выводы связаны' },
+  assumptions: { status: statuses.assumptions ?? 'passed', reason: 'предположения отделены' },
+})
+
+test('research verdict is structured and every criterion is checked', async () => {
   const files = []
-  const ports = { askModel: async () => 'ИСТОЧНИКИ: да; СВЯЗЬ: да; ПРЕДПОЛОЖЕНИЯ: да' }
-  const passed = await verify({ taskText: 'исследуй рынок и укажи источники', files, answer: 'Источники: [1] …', ports })
+  const passed = await verify({
+    taskText: 'исследуй рынок и укажи источники',
+    files,
+    answer: 'Источники: [1] …',
+    ports: { askModel: async () => researchVerdict() },
+  })
   assert.equal(passed.status, 'passed')
-  const failed = await verify({ taskText: 'исследуй рынок и укажи источники', files, answer: 'просто мнение', ports: { askModel: async () => 'ИСТОЧНИКИ: нет' } })
+  assert.ok(passed.limitations.some((line) => /фактическая проверка содержимого источников не выполнялась/.test(line)))
+
+  const failed = await verify({
+    taskText: 'исследуй рынок и укажи источники',
+    files,
+    answer: 'Источники отсутствуют',
+    ports: { askModel: async () => researchVerdict({ sources: 'failed', linkage: 'failed', assumptions: 'failed' }) },
+  })
   assert.equal(failed.status, 'failed')
+  // Фраза «Источники отсутствуют» не даёт passed из-за ключевого слова.
+  assert.ok(failed.criteria.every((criterion) => criterion.status === 'failed'))
+
+  const noLinkage = await verify({
+    taskText: 'исследуй рынок и укажи источники',
+    files,
+    answer: 'Ссылки: [1], [2]',
+    ports: { askModel: async () => researchVerdict({ linkage: 'failed' }) },
+  })
+  assert.notEqual(noLinkage.status, 'passed')
+  assert.equal(noLinkage.criteria.find((criterion) => criterion.id === 'linkage').status, 'failed')
+})
+
+test('broken research verdict is unavailable and never passed', async () => {
+  const files = []
+  for (const raw of ['не JSON', '{"sources": {"status": "ok", "reason": "x"}}', JSON.stringify({ sources: { status: 'passed', reason: 'x' } })]) {
+    const result = await verify({
+      taskText: 'исследуй рынок и укажи источники',
+      files,
+      answer: 'текст',
+      ports: { askModel: async () => raw },
+    })
+    assert.notEqual(result.status, 'passed')
+    assert.ok(result.criteria.every((criterion) => criterion.status === 'unavailable'))
+    assert.ok(result.limitations.some((line) => /вердикт исследования не разобран/.test(line)))
+  }
 })
 
 test('disabled and not required are explicit statuses', () => {

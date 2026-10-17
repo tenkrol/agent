@@ -27,6 +27,80 @@ const criterionResult = (criterion, status, evidence, notes) => ({
 
 const extensionOf = (name) => String(name ?? '').split('.').pop().toLowerCase()
 
+/** Найти первый разбираемый JSON-объект в ответе модели (без хрупких регулярок). */
+function firstJsonObject(text) {
+  for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
+    let depth = 0
+    let inString = false
+    let escaped = false
+    for (let index = start; index < text.length; index++) {
+      const char = text[index]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (char === '\\') escaped = true
+        else if (char === '"') inString = false
+        continue
+      }
+      if (char === '"') { inString = true; continue }
+      if (char === '{') depth += 1
+      else if (char === '}') {
+        depth -= 1
+        if (depth === 0) {
+          try {
+            return JSON.parse(text.slice(start, index + 1))
+          } catch {
+            break
+          }
+        }
+      }
+    }
+  }
+  return undefined
+}
+
+/** Разобрать структурированный вердикт проверки исследования. */
+function parseResearchVerdict(raw) {
+  const text = String(raw ?? '').trim().replace(/^\x60\x60\x60(?:json)?/i, '').replace(/\x60\x60\x60$/i, '').trim()
+  const parsed = firstJsonObject(text)
+  if (!parsed || typeof parsed !== 'object') return { error: 'вердикт не разобран как JSON' }
+  const allowed = new Set(['passed', 'failed', 'unavailable'])
+  const verdict = {}
+  for (const key of ['sources', 'linkage', 'assumptions']) {
+    const item = parsed?.[key]
+    if (!item || typeof item !== 'object') return { error: 'в вердикте нет критерия ' + key }
+    if (!allowed.has(item.status)) return { error: 'неизвестный статус критерия ' + key }
+    if (typeof item.reason !== 'string' || item.reason.trim() === '') return { error: 'нет обоснования критерия ' + key }
+    verdict[key] = { status: item.status, reason: item.reason.trim() }
+  }
+  return { verdict }
+}
+
+/** Собрать свидетельство по таблицам: все файлы, пересчёт каждого. */
+async function verifySpreadsheets({ files, root, ports, timeoutMs, limitations }) {
+  const inspected = []
+  for (const file of files) {
+    try {
+      const value = await ports.inspectSpreadsheet({ root, path: file.relPath, name: file.name })
+      inspected.push({ file, opens: value?.opens === true, text: String(value?.text ?? ''), initialErrors: Array.isArray(value?.errors) ? value.errors : [] })
+    } catch (error) {
+      inspected.push({ file, opens: false, text: '', initialErrors: [], inspectError: String(error?.message ?? error) })
+    }
+  }
+  for (const entry of inspected) {
+    if (!ports.recalcSpreadsheet) {
+      entry.recalcError = 'порт пересчёта недоступен'
+      continue
+    }
+    try {
+      entry.recalc = await ports.recalcSpreadsheet({ root, path: entry.file.relPath, timeoutMs })
+    } catch (error) {
+      entry.recalcError = String(error?.message ?? error)
+    }
+  }
+  return inspected
+}
+
+
 /**
  * Проверить результат.
  *
@@ -96,38 +170,72 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
     if (!ports.inspectSpreadsheet) {
       limitations.push('порт проверки таблицы недоступен')
       for (const criterion of criteria) results.push(criterionResult(criterion, 'unavailable', '', 'порт недоступен'))
+    } else if (sheets.length === 0) {
+      limitations.push('табличный файл не создан')
+      for (const criterion of criteria) results.push(criterionResult(criterion, 'unavailable', '', 'нет таблицы для проверки'))
     } else {
-      let opens = false
-      let text = ''
-      let errors = []
-      for (const file of sheets) {
-        try {
-          const inspected = await ports.inspectSpreadsheet({ root, path: file.relPath, name: file.name })
-          opens = opens || inspected?.opens === true
-          text += `\n${inspected?.text ?? ''}`
-        } catch (error) {
-          limitations.push(`таблица: ${String(error?.message ?? error)}`)
-        }
+      const inspected = await verifySpreadsheets({ files: sheets, root, ports, timeoutMs, limitations })
+
+      // Каждый файл оценивается отдельно: успех одного не скрывает проблему другого.
+      for (const entry of inspected) {
+        if (entry.inspectError) limitations.push(entry.file.name + ': ' + entry.inspectError)
+        if (entry.initialErrors.length > 0) limitations.push(entry.file.name + ': ошибки формул при чтении: ' + entry.initialErrors.slice(0, 5).join(', '))
+        if (entry.recalcError) limitations.push(entry.file.name + ': пересчёт недоступен — ' + entry.recalcError)
+        else if (entry.recalc?.ok !== true) limitations.push(entry.file.name + ': пересчёт не подтверждён — ' + (entry.recalc?.error ?? 'нет успешного результата'))
+        else if ((entry.recalc.errors ?? []).length > 0) limitations.push(entry.file.name + ': после пересчёта ошибки: ' + entry.recalc.errors.slice(0, 5).join(', '))
       }
-      if (ports.recalcSpreadsheet && sheets.length > 0) {
-        try {
-          const recalc = await ports.recalcSpreadsheet({ root, path: sheets[0].relPath, timeoutMs })
-          opens = opens || recalc?.opens === true
-          errors = recalc?.errors ?? []
-          text += `\n${recalc?.text ?? ''}`
-        } catch (error) {
-          limitations.push(`пересчёт формул: ${String(error?.message ?? error)}`)
+
+      const openFailures = inspected.filter((entry) => !entry.opens)
+      const dataFailures = inspected.filter((entry) => String(entry.text ?? '').trim() === '')
+
+      // Вычисления: passed только при подтверждённом пересчёте каждого файла.
+      let computationFailed = false
+      let computationUnavailable = false
+      const computationNotes = []
+      for (const entry of inspected) {
+        const name = entry.file.name ?? entry.file.relPath
+        if (entry.recalcError) {
+          computationUnavailable = true
+          computationNotes.push(name + ': пересчёт недоступен')
+          continue
         }
-      } else {
-        limitations.push('пересчёт формул недоступен')
+        if (!entry.recalc || entry.recalc.ok !== true) {
+          computationUnavailable = true
+          computationNotes.push(name + ': пересчёт не подтверждён' + (entry.recalc?.error ? ' (' + entry.recalc.error + ')' : ''))
+          continue
+        }
+        const errors = Array.isArray(entry.recalc.errors) ? entry.recalc.errors : []
+        if (errors.length > 0) {
+          computationFailed = true
+          computationNotes.push(name + ': ошибки формул ' + errors.slice(0, 5).join(', '))
+          continue
+        }
+        if (entry.initialErrors.length > 0) {
+          // Пересчёт мог исправить формулу, но проверенная версия не сохранена и не выдана.
+          computationFailed = true
+          computationNotes.push(name + ': исходные ошибки ' + entry.initialErrors.slice(0, 5).join(', ') + '; проверенная версия не сохранена')
+          continue
+        }
+        computationNotes.push(name + ': пересчёт подтверждён')
       }
+      if (!ports.recalcSpreadsheet) {
+        computationUnavailable = true
+        computationNotes.push('пересчёт формул недоступен')
+      }
+      const computationStatus = computationFailed ? 'failed' : (computationUnavailable ? 'unavailable' : 'passed')
+
       for (const criterion of criteria) {
-        if (criterion.id === 'opens') results.push(criterionResult(criterion, opens ? 'passed' : 'failed', opens ? 'таблица открывается' : 'таблица не открылась'))
-        else if (criterion.id === 'data') results.push(criterionResult(criterion, text.trim() !== '' ? 'passed' : 'failed', text.trim() !== '' ? 'данные найдены' : 'данных нет'))
-        else if (criterion.id === 'computation') {
-          if (errors.length > 0) results.push(criterionResult(criterion, 'failed', `ошибки формул: ${errors.slice(0, 5).join(', ')}`))
-          else results.push(criterionResult(criterion, 'passed', 'ошибки формул не найдены'))
-        } else results.push(criterionResult(criterion, opens ? 'passed' : 'failed', ''))
+        if (criterion.id === 'opens') {
+          results.push(criterionResult(criterion, openFailures.length === 0 ? 'passed' : 'failed',
+            openFailures.length === 0 ? 'все таблицы открываются' : 'не открылись: ' + openFailures.map((entry) => entry.file.name).join(', ')))
+        } else if (criterion.id === 'data') {
+          results.push(criterionResult(criterion, dataFailures.length === 0 ? 'passed' : 'failed',
+            dataFailures.length === 0 ? 'данные найдены во всех таблицах' : 'нет данных: ' + dataFailures.map((entry) => entry.file.name).join(', ')))
+        } else if (criterion.id === 'computation') {
+          results.push(criterionResult(criterion, computationStatus, computationNotes.join('; ')))
+        } else {
+          results.push(criterionResult(criterion, openFailures.length === 0 ? 'passed' : 'failed', openFailures.length === 0 ? '' : 'файл не открылся'))
+        }
       }
     }
   } else if (kind === 'code') {
@@ -168,27 +276,40 @@ export async function verify({ taskText = '', files = [], answer = '', root, por
       }
     }
   } else if (kind === 'research') {
-    const hasSources = /источник|ссылки|литература|sources/i.test(String(answer))
     if (!ports.askModel) {
       limitations.push('модельная проверка исследования недоступна')
       for (const criterion of criteria) results.push(criterionResult(criterion, 'unavailable', '', 'порт модели недоступен'))
     } else {
-      let verdict = ''
+      let verdict
       try {
-        verdict = String(await ports.askModel([
-          'Проверь ответ на исследовательский запрос. Ответь одной строкой:',
-          'ИСТОЧНИКИ: да|нет; СВЯЗЬ: да|нет; ПРЕДПОЛОЖЕНИЯ: да|нет',
+        const raw = await ports.askModel([
+          'Проверь ответ на исследовательский запрос по трём независимым критериям.',
+          'Верни ТОЛЬКО JSON без пояснений и без markdown:',
+          '{"sources":{"status":"passed|failed|unavailable","reason":"..."},',
+          ' "linkage":{"status":"passed|failed|unavailable","reason":"..."},',
+          ' "assumptions":{"status":"passed|failed|unavailable","reason":"..."}}',
+          'Критерии: sources — в ответе есть конкретные источники; linkage — выводы явно связаны',
+          'с источниками; assumptions — предположения отделены от подтверждённых сведений.',
+          'Ключевые слова сами по себе не доказательство. Если проверить нельзя — unavailable.',
+          'Содержимое источников не передано: оценивай только структуру ответа.',
           '',
           String(answer).slice(0, 12_000),
-        ].join('\n'))).toLowerCase()
+        ].join('\n'))
+        const parsed = parseResearchVerdict(raw)
+        if (parsed.error) {
+          limitations.push('вердикт исследования не разобран: ' + parsed.error)
+          verdict = undefined
+        } else {
+          verdict = parsed.verdict
+        }
       } catch (error) {
-        limitations.push(`модельная проверка не удалась: ${String(error?.message ?? error)}`)
+        limitations.push('модельная проверка не удалась: ' + String(error?.message ?? error))
       }
-      const sourcesOk = /источники?\s*[:—-]?\s*(да|yes|есть)/i.test(verdict) || hasSources
-      const hasAssumptions = /предположени/i.test(String(answer)) || /предполож/i.test(verdict)
+      limitations.push('фактическая проверка содержимого источников не выполнялась: проверялся только текст ответа')
       for (const criterion of criteria) {
-        if (criterion.id === 'sources') results.push(criterionResult(criterion, sourcesOk ? 'passed' : 'failed', sourcesOk ? 'источники есть' : 'источников нет'))
-        else results.push(criterionResult(criterion, hasAssumptions ? 'passed' : 'unavailable', verdict.slice(0, 120)))
+        const item = verdict?.[criterion.id]
+        if (item) results.push(criterionResult(criterion, item.status, item.reason))
+        else results.push(criterionResult(criterion, 'unavailable', '', 'вердикт не разобран'))
       }
     }
   } else {

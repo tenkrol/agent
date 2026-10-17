@@ -17,7 +17,9 @@ export function createModelClient({ baseUrl, apiKey, model, timeoutMs = 90_000, 
           model,
           messages: [{ role: 'user', content: String(prompt) }],
           temperature: 0,
-          max_tokens: 300,
+          // Вердикт проверки — JSON из трёх критериев с обоснованиями: 300 токенов
+          // обрезали его на длинных ответах, и проверка честно уходила в unavailable.
+          max_tokens: 800,
         }),
         signal: AbortSignal.timeout(timeoutMs),
       })
