@@ -34,26 +34,30 @@
 
 Старые статусы при загрузке переносятся: `awaiting_reply → awaiting_owner`,
 `timeout → failed` + `reason: timeout`, `expired → cancelled` + `reason: expired`.
-`STATUS_LABEL` сохраняет прежние подписи, поэтому `/tasks`, `/task`, `/retry` и тесты
-продолжают читать те же смыслы.
+Отдельных статусов `timeout` и `expired` больше нет, но подписи сохраняются: функция
+`statusLabel(record)` учитывает `reason` и возвращает прежние «⌛ по таймауту» и
+«🕓 ответа не дождалась»; `describeTask` и `/tasks`, `/task`, `/retry` используют её.
+Это закрывается тестом на записи со всеми прежними статусами.
 
 Каждый переход — метод `journal.transition(id, to, { reason, actor, patch })`:
-- проверяет переход по таблице допустимых (`queued → running|cancelled`,
+- проверяет переход по таблице допустимых (`queued → running|cancelled|interrupted`,
   `running → done|failed|cancelled|interrupted|awaiting_owner|verifying`,
-  `awaiting_owner → running|cancelled`,
-  `verifying → done|partial|failed|interrupted|running` (`running` — повтор на исправление),
-  `interrupted → running|cancelled` — по `/continue`; терминальные состояния только в
-  архив, без возврата);
+  `awaiting_owner → queued|cancelled` (ответ владельца возвращает задачу в очередь; отмена),
+  `verifying → done|partial|failed|cancelled|interrupted|running` (`running` — повтор на
+  исправление), `interrupted → queued|cancelled` — по `/continue`; терминальные состояния
+  только в архив, без возврата);
 - дописывает в запись `transitions: [{ at, from, to, reason, actor }]` и `updatedAt`;
 - недопустимый переход — ошибка с понятным текстом и запись в журнал сервиса, без молчаливой
   подмены статуса.
 
 ### Долговечная запись
 `journal.save(record, { durable })`:
-- обычная запись — как сейчас, сериализованный `appendFile`;
-- принятие задачи и финальные статусы — `durable`: открыть файл на запись, записать строку,
-  вызвать `fsync`, закрыть, дождаться результата. Только после этого `submitBridgedTask`
-  возвращает `taskId`, а мост — `202`.
+- обычная запись — как сейчас, сериализованный `appendFile` (используется для отметок
+  прогресса `lastProgress`, которые не обязаны переживать сбой);
+- принятие задачи И каждая смена состояния — `durable`: открыть файл на запись, записать
+  строку, вызвать `fsync`, закрыть, дождаться результата. Так история переходов переживает
+  сбой, и после перезапуска видно, где именно остановилась задача. Только после первой
+  долговечной записи `submitBridgedTask` возвращает `taskId`, а мост — `202`.
 - Компакция при старте — как сейчас: временный файл, `rename`, затем `fsync` каталога
   (переносимость `fsync` каталога проверяется в тесте и мягко деградирует на платформах,
   где он не поддерживается).

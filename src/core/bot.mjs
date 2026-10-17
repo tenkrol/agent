@@ -89,6 +89,7 @@ const COMMANDS = [
   ['/tasks', 'последние задачи: статус, время, файлы'],
   ['/task', 'подробности одной задачи: /task <id>'],
   ['/retry', 'повторить задачу: /retry <id>'],
+  ['/continue', 'продолжить прерванную задачу: /continue <id>'],
   ['/usage', 'расход по дням в токенах и деньгах: /usage [дней]'],
   ['/memory', 'что агент запомнил о вас; /memory — список, /forget <номер> — убрать'],
   ['/disk', 'Яндекс.Диск: /disk — состояние и файлы, /disk get <путь>, /disk link <путь>'],
@@ -116,13 +117,14 @@ export class AgentBot {
    * @param {string} [options.instructionsPath] - `AGENTS.md` template to install.
    * @param {() => Date} [options.now] - clock, injected by tests.
    */
-  constructor({ config, platform, runner, usage, state, journal, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
+  constructor({ config, platform, runner, usage, state, journal, actions, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
     this.config = config
     this.platform = platform
     this.runner = runner
     this.usage = usage
     this.state = state
     this.journal = journal
+    this.actions = actions
     this.schedules = schedules
     this.vision = vision
     this.ocr = ocr
@@ -147,6 +149,8 @@ export class AgentBot {
     this.worker = Promise.resolve()
     this.lastSweepAt = 0
     this.lastScheduleAt = 0
+    this.lastProgressAt = 0
+    this.recovered = { pending: [], interrupted: [] }
   }
 
   /** Prepare directories, identity and the polling cursor. */
@@ -162,6 +166,9 @@ export class AgentBot {
 
     await this.journal?.load()
     await this.journal?.compact()
+    // Принятые задачи и прерванные выполнения восстанавливаются до опроса Telegram:
+    // владелец не должен видеть «пустой» агент, пока очередь ещё не поднята.
+    this.recovered = await this.recoverTasks()
     if (this.schedules && this.config.schedules.enabled) {
       await this.schedules.load()
       // A restart must not fire a burst of missed runs: the next occurrence is
@@ -188,6 +195,103 @@ export class AgentBot {
     })
     void this.notifyStartup()
     void this.sweepAwaiting({ announce: true })
+    void this.announceRecovery()
+    if (this.queue.length > 0) {
+      this.worker = this.worker.then(() => this.drain()).catch((error) => {
+        this.logger?.error('recovery worker failed', { error })
+      })
+    }
+  }
+
+  /**
+   * Поднять очередь и разобраться с оборванными выполнениями.
+   *
+   * Задачи в `queued` возвращаются в очередь в прежнем порядке. Задачи, которые
+   * выполнялись, помечаются `interrupted` и не запускаются сами: неизвестно, какие
+   * внешние действия успели произойти. Для них сохраняются последние шаги и файлы,
+   * появившиеся в рабочей папке после начала выполнения.
+   */
+  async recoverTasks() {
+    const interrupted = this.journal ? await this.journal.recover() : []
+    await this.actions?.recover?.()
+    const pending = this.journal ? this.journal.pending() : []
+    this.queue = pending.map((record) => this.recordToJob(record))
+    if (this.journal) {
+      for (const record of interrupted) {
+        try {
+          const files = await snapshot(this.config.workspace.dir)
+          const since = Number(record.startedAt ?? record.createdAt ?? 0)
+          const partialFiles = [...files.entries()]
+            .filter(([, meta]) => (meta.mtimeMs ?? 0) >= since)
+            .map(([relPath]) => relPath)
+            .slice(0, 20)
+          await this.journal.update(record.id, { partialFiles })
+        } catch (error) {
+          this.logger?.debug?.('interrupted files scan failed', { error, taskId: record.id })
+        }
+      }
+    }
+    // Вопрос, открытый до перезапуска, восстанавливается из журнала: state.json
+    // мог не успеть сохраниться, а задача всё ещё ждёт владельца.
+    for (const record of this.journal?.awaiting() ?? []) {
+      const key = `await:${record.chatId}`
+      if (this.state.get(key)) continue
+      this.state.set(key, {
+        taskId: record.id,
+        askedAt: record.askedAt ?? record.updatedAt ?? this.now().getTime(),
+        kind: Array.isArray(record.variants) && record.variants.length > 0 ? 'variant' : 'question',
+        question: record.question,
+        variants: record.variants,
+        sessionId: record.sessionId,
+        brief: record.brief,
+      })
+    }
+    await this.state.flush()
+    if (pending.length > 0 || interrupted.length > 0) {
+      this.logger?.info('queue recovered', { queued: pending.length, interrupted: interrupted.length })
+    }
+    return { pending, interrupted }
+  }
+
+  /** Собрать задание из записи журнала для повторного выполнения. */
+  recordToJob(record) {
+    return {
+      id: record.id,
+      chatId: record.chatId,
+      userId: record.userId,
+      text: record.text ?? record.request ?? '',
+      attachments: record.attachments ?? [],
+      replyToMessageId: record.replyToMessageId,
+      bridgeFrom: record.bridgeFrom,
+      viaVoice: record.viaVoice,
+      brief: record.brief,
+      variantsMode: record.variantsMode,
+      freshSession: record.freshSession,
+      scheduledFrom: record.scheduledFrom,
+      retryOf: record.retryOf,
+      sessionId: record.sessionId,
+      procedure: record.procedure,
+      route: record.route,
+      forceDsh: record.forceDsh,
+    }
+  }
+
+  /** Одно сообщение о восстановлении, без спама при рестарт-петле. */
+  async announceRecovery() {
+    if (!this.recovered || this.config.recovery?.notify === false) return
+    const { pending, interrupted } = this.recovered
+    if (pending.length === 0 && interrupted.length === 0) return
+    const chatId = this.alertChatId()
+    if (chatId === undefined) return
+    const parts = []
+    if (pending.length > 0) {
+      parts.push(`🔄 Восстановил принятые задачи: ${pending.length} (${pending.map((record) => record.id).join(', ')}).`)
+    }
+    if (interrupted.length > 0) {
+      parts.push(`⏸ Прервано перезапуском: ${interrupted.map((record) => record.id).join(', ')}. `
+        + 'Автоматически не повторяю — продолжить: /continue <id>, начать заново: /retry <id>.')
+    }
+    await this.safeSend(chatId, parts.join('\n\n'))
   }
 
   /** Tell the owner the agent is up; a restart loop must not spam. */
@@ -216,7 +320,7 @@ export class AgentBot {
     this.running?.controller?.abort()
     await this.worker.catch(() => {})
     await this.platform.stop?.()
-    await Promise.all([this.usage.flush(), this.state.flush(), this.journal?.flush()])
+    await Promise.all([this.usage.flush(), this.state.flush(), this.journal?.flush(), this.actions?.flush()])
   }
 
   /** Poll until `stop()` is called. */
@@ -380,7 +484,11 @@ export class AgentBot {
 
   /** Mark one awaiting task as expired and forget it. */
   async expireAwaiting(chatId, awaiting) {
-    await this.journal?.update(awaiting.taskId, { status: STATUS.expired, error: 'ответа не дождался' }).catch(() => {})
+    await this.journal?.update(awaiting.taskId, {
+      status: STATUS.cancelled,
+      reason: 'expired',
+      error: 'ответа не дождался',
+    }).catch(() => {})
     await this.clearAwaiting(chatId)
     this.logger?.info('question expired', { taskId: awaiting.taskId, chatId })
   }
@@ -415,7 +523,6 @@ export class AgentBot {
   /** Queue the next run of a parked task, keeping its session. */
   async continueTask({ awaiting, chatId, userId, replyToMessageId, continuation }) {
     await this.clearAwaiting(chatId)
-    await this.journal?.update(awaiting.taskId, { status: STATUS.running, resumedAt: this.now().getTime() })
     await this.enqueueJob({
       id: awaiting.taskId,
       chatId,
@@ -455,7 +562,7 @@ export class AgentBot {
 
     if (action === 'x') {
       await this.clearAwaiting(chatId)
-      await this.journal?.update(taskId, { status: STATUS.cancelled, error: 'отменено пользователем' })
+      await this.journal?.update(taskId, { status: STATUS.cancelled, reason: 'cancelled', error: 'отменено пользователем' })
       await this.safeAnswerCallback({ callbackId, text: 'Отменено' })
       await this.dropKeyboard({ chatId, messageId, markdown: `${update.callback.text}\n\n⛔ Отменено.` })
       return
@@ -517,7 +624,7 @@ export class AgentBot {
       case '/new':
         await this.clearAwaiting(chatId)
         this.state.delete(`session:${chatId}`)
-        this.queue = []
+        await this.clearQueue('очищено командой /new')
         await this.safeSend(chatId, '🆕 Контекст сброшен: следующая задача начнётся с чистого листа.')
         return
       case '/tasks':
@@ -528,6 +635,9 @@ export class AgentBot {
         return
       case '/retry':
         await this.safeSend(chatId, await this.retryTask({ args, chatId, userId: update.from?.id, replyToMessageId: update.messageId }))
+        return
+      case '/continue':
+        await this.safeSend(chatId, await this.continueInterrupted({ args }))
         return
       case '/usage':
         await this.safeSend(chatId, this.usageText(args))
@@ -672,7 +782,7 @@ export class AgentBot {
     if (id === '') return 'Укажите id: /retry <id>. Список — /tasks.'
     const record = this.journal.get(id)
     if (!record) return `Задача ${id} не найдена.`
-    if (record.status === STATUS.running || record.status === STATUS.awaiting) {
+    if ([STATUS.running, STATUS.awaiting_owner, STATUS.queued, STATUS.verifying].includes(record.status)) {
       return `Задача ${id} ещё не завершена (${record.status}); дождитесь окончания или /cancel.`
     }
     const text = String(record.request ?? record.brief ?? '').trim()
@@ -1107,8 +1217,8 @@ export class AgentBot {
   /** Run the task with the plan the owner approved. */
   async approvePlan({ awaiting, chatId, userId, replyToMessageId }) {
     await this.clearAwaiting(chatId)
-    await this.journal?.update(awaiting.taskId, { status: STATUS.running, resumedAt: this.now().getTime() })
     await this.enqueueJob({
+      continuationOf: awaiting.taskId,
       id: awaiting.taskId,
       chatId,
       userId,
@@ -1195,18 +1305,22 @@ export class AgentBot {
       quick.text,
       quickFooter({ tokens: quick.usage.totalTokens, usdText: formatUsd(cost.usd), taskId: job.id }),
     ].join('\n'), { replyToMessageId: this.jobReplyTo(job) })
-    void this.mirrorResult(quick.text)
+    await this.mirrorResult(quick.text, job.id)
     return { quick: true, text: quick.text }
   }
 
   /** Abort the running task, drop the open question and clear the queue. */
   async cancelAll(chatId) {
     const queued = this.queue.length
-    this.queue = []
+    await this.clearQueue('отменено командой /cancel')
     const awaiting = this.awaitingFor(chatId)
     if (awaiting) {
       await this.clearAwaiting(chatId)
-      await this.journal?.update(awaiting.taskId, { status: STATUS.cancelled, error: 'отменено пользователем' })
+      await this.journal?.update(awaiting.taskId, {
+        status: STATUS.cancelled,
+        reason: 'cancelled',
+        error: 'отменено пользователем',
+      }).catch(() => {})
     }
     if (this.running?.controller) {
       this.logger?.info('cancelling running task', { taskId: this.running.id, queued })
@@ -1219,6 +1333,80 @@ export class AgentBot {
       return
     }
     await this.safeSend(chatId, queued > 0 ? `Очередь очищена (${queued}).` : 'Нечего отменять.')
+  }
+
+  /** Отменить все задачи, которые ещё стоят в очереди, не теряя их из журнала. */
+  async clearQueue(reason) {
+    const queued = [...this.queue]
+    this.queue = []
+    for (const job of queued) {
+      try {
+        await this.journal?.transition(job.id, STATUS.cancelled, { reason: 'cancelled', patch: { error: reason } })
+      } catch (error) {
+        this.logger?.warn('queued task cancel failed', { taskId: job.id, error })
+      }
+    }
+    return queued.length
+  }
+
+  /** Закрыть задачу ошибкой, не падая на недопустимом переходе. */
+  async failTask(id, { reason = 'internal', error, status = STATUS.failed } = {}) {
+    try {
+      await this.journal?.update(id, { status, reason, error })
+    } catch (cause) {
+      this.logger?.warn('task status update failed', { taskId: id, error: cause })
+    }
+  }
+
+  /**
+   * Продолжить прерванную задачу.
+   *
+   * Если в журнале действий есть незавершённые внешние действия, сначала нужен
+   * явный ответ владельца: повторять отправку молча нельзя.
+   */
+  async continueInterrupted({ args } = {}) {
+    if (!this.journal) return 'Журнал задач недоступен.'
+    const parts = String(args ?? '').trim().split(/\s+/).filter(Boolean)
+    const id = parts[0]
+    const confirmed = parts.includes('--yes')
+    if (!id) return 'Укажите id: /continue <id>. Список — /tasks.'
+    const record = this.journal.get(id)
+    if (!record) return `Задача ${id} не найдена.`
+    if (record.status === STATUS.queued) return `Задача ${id} уже в очереди.`
+    if (record.status !== STATUS.interrupted) {
+      return `Продолжить можно только прерванную задачу; ${id} сейчас — ${record.status}.`
+    }
+    const unresolved = this.actions?.unresolved(id) ?? []
+    if (unresolved.length > 0 && !confirmed) {
+      const list = unresolved.slice(0, 5).map((action) => `• ${action.kind}${action.target ? ` → ${action.target}` : ''}`)
+      return [
+        `У задачи ${id} есть действия с неизвестным исходом:`,
+        ...list,
+        '',
+        'Если внешнего эффекта не было или вы уже видели результат — повторите:',
+        `/continue ${id} --yes`,
+      ].join('\n')
+    }
+    const text = String(record.request ?? record.text ?? '').trim()
+    if (text === '') return `У задачи ${id} не сохранился текст запроса.`
+    const prompt = record.sessionId
+      ? `Продолжи прерванную задачу с того места, где остановилась. Исходная задача:\n${text}`
+      : text
+    await this.journal.requeue(id, {
+      reason: 'продолжение прерванной задачи',
+      patch: {
+        text: prompt,
+        request: text.slice(0, 4000),
+        sessionId: record.sessionId,
+        brief: record.brief,
+        resumedAt: this.now().getTime(),
+      },
+    })
+    this.queue.push(this.recordToJob(this.journal.get(id)))
+    this.worker = this.worker.then(() => this.drain()).catch((error) => {
+      this.logger?.error('continue worker failed', { error })
+    })
+    return `▶️ Продолжаю задачу ${id} с сохранённого места.`
   }
 
   /** List the newest files in the workspace, with its total size. */
@@ -1402,6 +1590,7 @@ export class AgentBot {
       brief: text,
       bridgeFrom: fromBridge ? String(update.from?.id) : undefined,
       viaVoice: (update.attachments ?? []).some((item) => item.kind === 'voice' || item.kind === 'audio'),
+      requestKey: fromBridge ? `tg:${chatId}:${update.messageId}` : undefined,
     })
   }
 
@@ -1417,6 +1606,43 @@ export class AgentBot {
       return { queued: false, reason: 'дневной лимит токенов исчерпан' }
     }
     job.enqueuedAt = this.now().getTime()
+
+    // Принятие задачи — это запись на диск ДО появления в памяти. Ошибка записи
+    // означает «задача не принята»: ни выполнения, ни успешного ответа мосту.
+    if (this.journal) {
+      try {
+        if (job.continuationOf) {
+          const existing = this.journal.get(job.id)
+          if (!existing) return { queued: false, reason: 'задача для продолжения не найдена' }
+          await this.journal.requeue(job.id, {
+            reason: job.planApproved ? 'план утверждён' : 'ответ владельца',
+            patch: {
+              text: job.text,
+              request: String(job.text ?? '').slice(0, 4000),
+              attachments: job.attachments ?? [],
+              sessionId: job.sessionId,
+              resumedAt: this.now().getTime(),
+              brief: job.brief ?? existing.brief,
+            },
+          })
+        } else {
+          const accepted = await this.journal.openQueued(job)
+          if (accepted.conflict) {
+            return { queued: false, conflict: true, reason: 'ключ запроса уже связан с другой задачей' }
+          }
+          if (accepted.duplicate) {
+            this.logger?.info('duplicate bridge request', { taskId: accepted.record.id, requestKey: job.requestKey })
+            return { queued: true, duplicate: true, taskId: accepted.record.id, state: accepted.record.status, position: 0 }
+          }
+          job.id = accepted.record.id
+        }
+      } catch (error) {
+        this.logger?.error('task not saved', { error, taskId: job.id })
+        await this.safeSend(job.chatId, `⚠️ Задача ${job.id} не принята: не удалось сохранить. Повторите позже.`)
+        return { queued: false, storageFailed: true, reason: 'задача не сохранена' }
+      }
+    }
+
     if (job.bridgeFrom) {
       this.logger?.info('task accepted from the bridge', { taskId: job.id, from: job.bridgeFrom })
       if (this.config.bridge.notify) {
@@ -1430,7 +1656,7 @@ export class AgentBot {
     this.worker = this.worker.then(() => this.drain()).catch((error) => {
       this.logger?.error('worker failed', { error })
     })
-    return { queued: true, position: this.queue.length }
+    return { queued: true, duplicate: false, taskId: job.id, position: this.queue.length }
   }
 
   /**
@@ -1443,7 +1669,7 @@ export class AgentBot {
    * @returns {Promise<{taskId: string}>} the queued task id.
    * @throws {Error} when the queue or the budget refuses it, so the caller can say so.
    */
-  async submitBridgedTask({ task, source } = {}) {
+  async submitBridgedTask({ task, source, requestId } = {}) {
     const chatId = this.alertChatId()
     if (chatId === undefined) throw new Error('не настроен чат владельца для результата')
     const id = this.journal ? this.journal.nextId(this.now()) : `bridge-${this.now().getTime().toString(36)}`
@@ -1455,13 +1681,28 @@ export class AgentBot {
       attachments: [],
       brief: `🔗 ${String(task).slice(0, 280)}`,
       bridgeFrom: source ?? 'http',
+      requestKey: requestId ? `${source ?? 'http'}:${requestId}` : undefined,
       // A bridged task runs unattended: variants would wait for nobody, and its
       // own fresh session keeps the owner's context out of the bill.
       variantsMode: 'never',
       freshSession: true,
     })
-    if (!outcome?.queued) throw new Error(outcome?.reason ?? 'задача не поставлена в очередь')
-    return { taskId: id }
+    if (outcome?.conflict) {
+      const error = new Error(outcome.reason ?? 'ключ запроса уже связан с другой задачей')
+      error.code = 'CONFLICT'
+      throw error
+    }
+    if (outcome?.storageFailed) {
+      const error = new Error(outcome.reason ?? 'задача не сохранена')
+      error.code = 'STORAGE_FAILED'
+      throw error
+    }
+    if (!outcome?.queued) {
+      const error = new Error(outcome?.reason ?? 'задача не поставлена в очередь')
+      error.code = 'REFUSED'
+      throw error
+    }
+    return { taskId: outcome.taskId ?? id, duplicate: Boolean(outcome.duplicate), state: outcome.state ?? 'queued' }
   }
 
   /** Run queued tasks one by one. */
@@ -1473,7 +1714,7 @@ export class AgentBot {
         await this.executeTask(job)
       } catch (error) {
         this.logger?.error('task execution failed', { taskId: job.id, error })
-        await this.journal?.update(job.id, { status: STATUS.failed, error: String(error?.message ?? error).slice(0, 300) }).catch(() => {})
+        await this.failTask(job.id, { reason: 'internal', error: String(error?.message ?? error).slice(0, 300) })
         await this.safeSend(job.chatId, `Внутренняя ошибка при выполнении задачи ${job.id}: ${String(error?.message ?? error).slice(0, 300)}`)
       }
     }
@@ -1489,7 +1730,7 @@ export class AgentBot {
     // The queue may have waited: re-check the budget before spending anything.
     if (this.config.limits.dailyTokenLimit > 0 && this.usage.limitReached(this.now(), timeZone)) {
       await this.safeSend(job.chatId, 'Дневной лимит токенов исчерпан. Задача не запущена.')
-      await this.journal?.update(job.id, { status: STATUS.failed, error: 'дневной лимит токенов' })
+      await this.failTask(job.id, { reason: 'budget', error: 'дневной лимит токенов' })
       return
     }
 
@@ -1533,27 +1774,32 @@ export class AgentBot {
       variantsMode: job.variantsMode ?? this.config.dialogue.proposeVariants,
     })
 
-    // A fresh task gets its record here; a continuation already has one (the
-    // parked question) and is only moved back to `running`.
-    if (this.journal && !this.journal.get(job.id)) {
-      await this.journal.open({
-        id: job.id,
-        chatId: job.chatId,
-        userId: job.userId,
+    // Задача уже сохранена при принятии; здесь только переход в выполнение.
+    if (this.journal) {
+      const existing = this.journal.get(job.id)
+      const patch = {
+        request: String(job.text ?? '').slice(0, REQUEST_KEEP_CHARS),
+        text: String(job.text ?? ''),
         brief: job.brief ?? String(job.text ?? '').slice(0, 300),
+        chatId: String(job.chatId),
+        userId: job.userId === undefined ? undefined : String(job.userId),
+        startedAt: this.now().getTime(),
         retryOf: job.retryOf,
-        scheduledFrom: job.scheduledFrom,
-      })
+        attachments: job.attachments ?? [],
+        requestKey: job.requestKey,
+      }
+      try {
+        if (!existing) {
+          await this.journal.open({ id: job.id, chatId: job.chatId, userId: job.userId, brief: job.brief, retryOf: job.retryOf, scheduledFrom: job.scheduledFrom })
+        }
+        await this.journal.transition(job.id, STATUS.running, {
+          reason: job.continuationOf ? 'ответ владельца' : 'запуск',
+          patch,
+        })
+      } catch (error) {
+        this.logger?.error('task start transition failed', { error, taskId: job.id })
+      }
     }
-    await this.journal?.update(job.id, {
-      status: STATUS.running,
-      request: String(job.text ?? '').slice(0, REQUEST_KEEP_CHARS),
-      brief: job.brief ?? String(job.text ?? '').slice(0, 300),
-      chatId: String(job.chatId),
-      userId: job.userId === undefined ? undefined : String(job.userId),
-      startedAt: this.now().getTime(),
-      retryOf: job.retryOf,
-    })
 
     // Размер прошлой беседы: если он вырос выше предела, продолжаем с чистой
     // сессии. Контекст — главная статья расхода, и держать его под контролем
@@ -1684,11 +1930,19 @@ export class AgentBot {
 
     const statusKind = result.aborted
       ? STATUS.cancelled
+      : result.ok && !result.timedOut ? STATUS.done : STATUS.failed
+    const reason = result.aborted
+      ? 'cancelled'
       : result.timedOut
-        ? STATUS.timeout
-        : result.ok ? STATUS.done : STATUS.failed
+        ? 'timeout'
+        : result.budgetExceeded
+          ? 'budget'
+          : result.stepsExceeded
+            ? 'steps'
+            : result.ok ? undefined : 'exit'
     await this.journal?.close(job.id, {
       status: statusKind,
+      reason,
       error: result.ok || result.aborted ? undefined : (result.stderr?.slice(-300) || `код ${result.exitCode}`),
     })
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
@@ -1697,7 +1951,7 @@ export class AgentBot {
     await this.sendVoiceAnswer({ job, result })
     await this.maybeWarnLimit()
     await this.maybeWarnWorkspace()
-    if ([STATUS.failed, STATUS.timeout].includes(statusKind) && String(job.chatId) !== String(this.alertChatId())) {
+    if (statusKind === STATUS.failed && String(job.chatId) !== String(this.alertChatId())) {
       await this.alert(`⚠️ Задача ${job.id} завершилась неудачно (${statusKind}).`)
     }
   }
@@ -1706,7 +1960,8 @@ export class AgentBot {
   async parkForAnswer({ job, result, reply, statusMessageId, outputs }) {
     const sessionId = result.sessionId ?? job.sessionId
     await this.journal?.update(job.id, {
-      status: STATUS.awaiting,
+      status: STATUS.awaiting_owner,
+      reason: 'question',
       question: reply.question,
       askedAt: this.now().getTime(),
       files: outputs.selected.map((entry) => entry.relPath),
@@ -1730,7 +1985,7 @@ export class AgentBot {
       `_Ответьте сообщением. Отменить — /cancel. Ответ жду до ${hours} ч._`,
     ].filter((part) => part !== '').join('\n')
     await this.safeSend(job.chatId, questionText, { replyToMessageId: this.jobReplyTo(job) })
-    void this.mirrorResult(questionText)
+    await this.mirrorResult(questionText, job.id)
     this.logger?.info('task awaits an answer', { taskId: job.id, questionChars: reply.question.length })
   }
 
@@ -1738,7 +1993,8 @@ export class AgentBot {
   async parkForVariants({ job, result, reply, statusMessageId, outputs }) {
     const sessionId = result.sessionId ?? job.sessionId
     await this.journal?.update(job.id, {
-      status: STATUS.awaiting,
+      status: STATUS.awaiting_owner,
+      reason: 'variants',
       variants: reply.variants,
       // The model often asks a clarifying question next to the variants; keep
       // it so a free-text answer still makes sense later.
@@ -1769,7 +2025,7 @@ export class AgentBot {
       keyboard: this.variantsKeyboard(job.id, reply.variants),
       replyToMessageId: this.jobReplyTo(job),
     })
-    void this.mirrorResult(body)
+    await this.mirrorResult(body, job.id)
     if (sent?.messageId !== undefined) {
       const awaiting = this.awaitingFor(job.chatId)
       if (awaiting) await this.setAwaiting(job.chatId, { ...awaiting, messageId: sent.messageId })
@@ -1842,7 +2098,7 @@ export class AgentBot {
     await this.safeSend(job.chatId, text, {
       replyToMessageId: this.jobReplyTo(job),
     })
-    void this.mirrorResult(text)
+    await this.mirrorResult(text, job.id)
   }
 
   /**
@@ -1886,11 +2142,13 @@ export class AgentBot {
       }
       const caption = `${entry.relPath} · ${formatSize(entry.size)}`
       const replyToMessageId = index === 0 ? job.replyToMessageId : undefined
+      const action = await this.beginAction(job.id, 'file', entry.relPath)
       try {
+        let sent
         if (file.photo && file.bytes.length <= PHOTO_SEND_LIMIT) {
-          await this.platform.sendPhoto({ chatId: job.chatId, bytes: file.bytes, fileName: entry.relPath.split(path.sep).pop(), caption, replyToMessageId })
+          sent = await this.platform.sendPhoto({ chatId: job.chatId, bytes: file.bytes, fileName: entry.relPath.split(path.sep).pop(), caption, replyToMessageId })
         } else {
-          await this.platform.sendDocument({
+          sent = await this.platform.sendDocument({
             chatId: job.chatId,
             bytes: file.bytes,
             fileName: entry.relPath.split(path.sep).pop(),
@@ -1899,8 +2157,10 @@ export class AgentBot {
             replyToMessageId,
           })
         }
+        await this.confirmAction(action, sent?.messageId)
         this.logger?.info('deliverable sent', { taskId: job.id, file: entry.relPath, bytes: entry.size })
       } catch (error) {
+        await this.unknownAction(action, 'file send failed')
         this.logger?.warn('deliverable send failed', { file: entry.relPath, error })
         await this.safeSend(job.chatId, `⚠️ Не удалось отправить «${entry.relPath}»: ${String(error?.description ?? error?.message ?? error).slice(0, 200)}`)
       }
@@ -1974,13 +2234,47 @@ export class AgentBot {
    * Служебные сообщения (статусы, прогресс, отметки, сводки, алерты) зеркалировать нельзя:
    * владелец получал поток вместо результата. Ошибка зеркалирования на доставку не влияет.
    */
-  async mirrorResult(markdown) {
+  async mirrorResult(markdown, taskId) {
     const text = String(markdown ?? '').trim()
     if (text === '') return
+    const action = await this.beginAction(taskId, 'mirror', 'outbox')
     try {
-      await this.mirror(text, this.config, { logger: this.logger })
+      const result = await this.mirror(text, this.config, { logger: this.logger })
+      await this.confirmAction(action, result?.status ?? result?.messageId)
     } catch (error) {
+      await this.unknownAction(action, 'mirror failed')
       this.logger?.debug?.('mirror failed', { error })
+    }
+  }
+
+  /** Начать внешнее действие в журнале (если журнал включён). */
+  async beginAction(taskId, kind, target) {
+    if (!this.actions || !taskId) return undefined
+    try {
+      return await this.actions.begin({ taskId, kind, target })
+    } catch (error) {
+      this.logger?.warn('action log begin failed', { error, kind })
+      return undefined
+    }
+  }
+
+  /** Подтвердить внешнее действие. */
+  async confirmAction(action, receipt) {
+    if (!action) return
+    try {
+      await this.actions.confirm(action.id, { receipt })
+    } catch (error) {
+      this.logger?.warn('action log confirm failed', { error })
+    }
+  }
+
+  /** Отметить внешнее действие как неизвестное. */
+  async unknownAction(action, reason) {
+    if (!action) return
+    try {
+      await this.actions.unknown(action.id, { reason })
+    } catch (error) {
+      this.logger?.warn('action log unknown failed', { error })
     }
   }
 
@@ -1993,6 +2287,12 @@ export class AgentBot {
       if (this.progress) this.progress.tool = String(event.tool ?? '')
     } else if (event?.type === 'status' && event.phase === 'step_end') {
       if (this.progress) this.progress.tool = ''
+    }
+    // Отметка прогресса — не чаще раза в 15 секунд: после сбоя видно, где остановились.
+    const at = this.now().getTime()
+    if (this.journal && this.running && at - (this.lastProgressAt ?? 0) > 15_000) {
+      this.lastProgressAt = at
+      void this.journal.progress(this.running.id, { steps: this.running.steps, tool: this.progress?.tool }).catch(() => {})
     }
   }
 }

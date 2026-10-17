@@ -24,6 +24,7 @@ import { QuickClient } from './execution/quick.mjs'
 import { createTranscriber } from './tools/stt.mjs'
 import { StateStore } from './storage/state.mjs'
 import { TaskJournal } from './storage/tasks.mjs'
+import { ActionLog } from './storage/actions.mjs'
 import { createSynthesizer } from './tools/tts.mjs'
 import { UsageStore } from './storage/usage.mjs'
 import { VisionClient } from './tools/vision.mjs'
@@ -84,6 +85,14 @@ async function main() {
     logger,
     maxEntries: config.journal.maxEntries,
   })
+  // Журнал внешних действий: что уже отправлено и где исход неизвестен.
+  const actions = config.journal.actionLog
+    ? await new ActionLog({
+      file: path.join(stateDir, 'actions.jsonl'),
+      logger,
+      maxEntries: config.journal.actionLogMax,
+    }).load()
+    : undefined
   const schedules = new ScheduleStore({
     file: path.join(stateDir, 'schedules.json'),
     timeZone: config.schedules.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -203,6 +212,7 @@ async function main() {
     usage,
     state,
     journal,
+    actions,
     schedules,
     vision: visionEnabled ? vision : undefined,
     ocr: ocrAvailable ? ocr : undefined,
@@ -224,7 +234,7 @@ async function main() {
       port: config.bridge.port,
       maxTaskChars: config.bridge.maxTaskChars,
       logger,
-      onSubmit: ({ task, source }) => bot.submitBridgedTask({ task, source }),
+      onSubmit: ({ task, source, requestId }) => bot.submitBridgedTask({ task, source, requestId }),
     })
     : undefined
   if (!bridgeEnabled) logger.info('bridge http off', { http: config.bridge.http, token: Boolean(config.bridge.token) })

@@ -57,7 +57,7 @@ test('a big task is parked with a plan instead of running', async () => {
 
     assert.equal(calls.length, 0, 'DSH не запускался до утверждения')
     const record = env.journal.recent(1)[0]
-    assert.equal(record.status, 'awaiting_reply')
+    assert.equal(record.status, 'awaiting_owner')
     assert.match(record.plan, /собрать данные/)
     const sent = env.platform.sent.at(-1)
     assert.match(sent.markdown, /План задачи/)

@@ -42,6 +42,11 @@ export const DEFAULTS = {
   POLL_TIMEOUT_SEC: '30',
   TELEGRAM_TIMEOUT_MS: '60000',
   USAGE_RETENTION_DAYS: '60',
+  // Восстановление после перезапуска: сообщать о принятых/прерванных задачах и вести
+  // журнал внешних действий, чтобы не повторять их при неизвестном исходе.
+  RECOVERY_NOTIFY: 'true',
+  ACTION_LOG: 'true',
+  ACTION_LOG_MAX: '5000',
 
   // Model: the key is forwarded to DSH as DEEPSEEK_API_KEY before each run.
   MODEL_API_KEY: '',

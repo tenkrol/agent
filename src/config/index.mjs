@@ -139,6 +139,11 @@ export function loadConfig(env = process.env) {
     },
     journal: {
       maxEntries: positiveInt(read(env, 'TASKS_MAX_ENTRIES'), 'TASKS_MAX_ENTRIES', { min: 50, max: 100_000 }),
+      actionLog: boolean(read(env, 'ACTION_LOG'), 'ACTION_LOG'),
+      actionLogMax: positiveInt(read(env, 'ACTION_LOG_MAX'), 'ACTION_LOG_MAX', { min: 100, max: 100_000 }),
+    },
+    recovery: {
+      notify: boolean(read(env, 'RECOVERY_NOTIFY'), 'RECOVERY_NOTIFY'),
     },
     voice: {
       stt: {

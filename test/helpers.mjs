@@ -8,6 +8,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentBot } from '../src/core/bot.mjs'
+import { ActionLog } from '../src/storage/actions.mjs'
 import { MemoryStore } from '../src/storage/memory.mjs'
 import { loadConfig } from '../src/config/index.mjs'
 import { ScheduleStore } from '../src/core/schedule.mjs'
@@ -152,7 +153,7 @@ export function testConfig(dir, overrides = {}) {
  * @param {object} [options] - `runner`, `configEnv`, `vision`, `ocr`.
  * @returns {Promise<object>} the environment, with `close()` to clean up.
  */
-export async function createBotHarness({ runner = createStubRunner(), configEnv = {}, vision, ocr, now, mirror } = {}) {
+export async function createBotHarness({ runner = createStubRunner(), configEnv = {}, vision, ocr, now, mirror, seedJournal } = {}) {
   const dir = await tempDir()
   const config = testConfig(dir, configEnv)
   const platform = createStubPlatform()
@@ -176,7 +177,13 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
     logger,
   })
   const memory = await new MemoryStore({ file: path.join(config.workspace.stateDir, 'memory.json'), logger }).load()
-  const bot = new AgentBot({ config, platform, runner, usage, state, journal, schedules, vision, ocr, memory, logger, now, mirror })
+  const actions = await new ActionLog({
+    file: path.join(config.workspace.stateDir, 'actions.jsonl'),
+    logger,
+  }).load()
+  // Тест восстановления подкладывает готовый журнал до старта бота.
+  if (seedJournal) await seedJournal({ journal, state, dir, config, path, actions })
+  const bot = new AgentBot({ config, platform, runner, usage, state, journal, actions, schedules, vision, ocr, memory, logger, now, mirror })
   await bot.start()
   return {
     dir,
@@ -186,6 +193,7 @@ export async function createBotHarness({ runner = createStubRunner(), configEnv 
     state,
     usage,
     journal,
+    actions,
     schedules,
     memory,
     bot,

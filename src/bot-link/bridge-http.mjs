@@ -148,14 +148,33 @@ export class BridgeServer {
       send(400, { ok: false, error: `task longer than ${this.maxTaskChars} chars` })
       return
     }
+    const requestId = payload?.requestId === undefined || payload?.requestId === null
+      ? undefined
+      : String(payload.requestId).trim()
+    if (requestId !== undefined && (requestId === '' || requestId.length > 200)) {
+      send(400, { ok: false, error: 'requestId must be 1..200 chars' })
+      return
+    }
 
     try {
-      const result = await this.onSubmit({ task, source: payload?.source })
-      this.logger?.info('bridge task accepted', { taskId: result?.taskId, chars: task.length, source: payload?.source })
-      send(202, { ok: true, taskId: result?.taskId })
+      const result = await this.onSubmit({ task, source: payload?.source, requestId })
+      this.logger?.info('bridge task accepted', {
+        taskId: result?.taskId,
+        chars: task.length,
+        source: payload?.source,
+        duplicate: Boolean(result?.duplicate),
+      })
+      send(202, {
+        ok: true,
+        taskId: result?.taskId,
+        state: result?.state ?? 'queued',
+        duplicate: Boolean(result?.duplicate),
+      })
     } catch (error) {
-      this.logger?.error('bridge task rejected', { error })
-      send(500, { ok: false, error: String(error?.message ?? error).slice(0, 200) })
+      const code = error?.code
+      const status = code === 'STORAGE_FAILED' ? 503 : code === 'CONFLICT' ? 409 : 500
+      this.logger?.error('bridge task rejected', { error, status })
+      send(status, { ok: false, error: String(error?.message ?? error).slice(0, 200) })
     }
   }
 }

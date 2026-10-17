@@ -142,6 +142,7 @@ Telegram ──polling──▶ bot.mjs ──▶ inbox/ (вложения: visi
 | Диск | `YANDEX_DISK`, `YANDEX_DISK_MODE`, `YANDEX_DISK_TOKEN`, `YANDEX_DISK_DIR` |
 | Наблюдатель | `OBSERVE_RETAIN_DAYS`, `OBSERVE_MOUNT` |
 | Отчёты | `REPORT_STYLE` (brief\|verbose) |
+| Восстановление | `RECOVERY_NOTIFY`, `ACTION_LOG`, `ACTION_LOG_MAX` |
 | Алерты | `ALERTS_MODE`, `ALERT_DEDUP_MIN`, `ALERT_QUIET_HOURS`, `ALERT_EMERGENCY_DISK_MB`, `ALERT_WARN_DISK_MB`, `DIGEST_AT` |
 
 ## Связь с чат-ботом и отчёты

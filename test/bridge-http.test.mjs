@@ -73,7 +73,7 @@ test('an authorised task is queued and its id comes back', async () => {
       body: JSON.stringify({ task: 'собери отчёт по продажам за октябрь', source: 'chat-bot' }),
     })
     assert.equal(response.status, 202)
-    assert.deepEqual(await response.json(), { ok: true, taskId: 'task-1' })
+    assert.deepEqual(await response.json(), { ok: true, taskId: 'task-1', state: 'queued', duplicate: false })
     assert.equal(seen.length, 1)
     assert.equal(seen[0].task, 'собери отчёт по продажам за октябрь')
     assert.equal(seen[0].source, 'chat-bot')
