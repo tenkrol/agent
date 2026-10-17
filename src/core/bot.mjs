@@ -2152,6 +2152,38 @@ export class AgentBot {
     const planned = remote ? undefined : await this.parkForPlan({ job, statusMessageId })
     if (planned) return planned
 
+    // Существенная неоднозначность формата: один вопрос до выполнения.
+    if (this.verifier?.ambiguous?.({ taskText: job.text })) {
+      const question = this.verifier.clarify?.() ?? 'Уточните формат результата.'
+      await this.journal?.update(job.id, {
+        status: STATUS.awaiting_owner,
+        reason: 'question',
+        question,
+        askedAt: this.now().getTime(),
+      })
+      await this.setAwaiting(job.chatId, {
+        taskId: job.id,
+        sessionId: undefined,
+        kind: 'question',
+        question,
+        brief: job.brief ?? String(job.text ?? '').slice(0, 200),
+      })
+      if (job.route) {
+        await this.delivery?.enqueue(buildQuestionEvent({
+          task: { ...job, route: job.route },
+          text: `❓ Вопрос по задаче ${job.id}:\n${question}`,
+          question,
+          variants: [],
+          version: job.resultVersion ?? 1,
+          maxChars: this.config.delivery?.textChars ?? 3500,
+        }))
+      } else {
+        await this.safeSend(job.chatId, `❓ Вопрос по задаче ${job.id}:\n${question}\n\n_Ответьте сообщением или /cancel._`, { replyToMessageId: this.jobReplyTo(job) })
+      }
+      this.logger?.info('task asks for clarification', { taskId: job.id })
+      return
+    }
+
     const before = await snapshot(dir)
     const controller = new AbortController()
     // Unattended work (a schedule, a task from the bridge) starts a fresh DSH
@@ -2176,7 +2208,7 @@ export class AgentBot {
       clearInterval(progressTimer)
     }
 
-    const spent = result.usage
+    let spent = result.usage
     this.usage.record({
       usage: toProviderUsage(spent),
       userId: job.userId,
@@ -2208,7 +2240,7 @@ export class AgentBot {
 
     // Collect files even from a failed run: work already done is still work.
     const after = await snapshot(dir)
-    const outputs = await collectOutputs({
+    let outputs = await collectOutputs({
       before,
       after,
       dir,
@@ -2232,6 +2264,56 @@ export class AgentBot {
         } catch (error) {
           verification = { status: 'unavailable', criteria: [], limitations: [String(error?.message ?? error)], checkedAt: this.now().getTime() }
         }
+      }
+    }
+
+    // Одна повторная попытка исправить проваленные критерии — в пределах бюджета.
+    if (verification && ['failed', 'partial'].includes(verification.status)
+      && (this.verifier?.maxAttempts ?? 0) > 0 && result.ok && !result.aborted && !result.timedOut) {
+      const failed = (verification.criteria ?? []).filter((criterion) => criterion.status !== 'passed')
+      const feedback = failed.map((criterion) => `- ${criterion.id}: ${criterion.evidence || criterion.notes || 'не пройдено'}`).join('\n')
+      try {
+        const repairResult = await this.runner.run({
+          task: `${job.text}\n\nПроверка результата нашла проблемы:\n${feedback}\nИсправь только их и отдай результат заново.`,
+          sessionId: result.sessionId,
+          signal: new AbortController().signal,
+          id: `${job.id}-fix`,
+        })
+        if (repairResult?.ok) {
+          result = repairResult
+          this.usage.record({
+            usage: toProviderUsage(repairResult.usage),
+            userId: job.userId,
+            chatId: job.chatId,
+            date: this.now(),
+            timeZone,
+          })
+          spent = {
+            ...spent,
+            inputTokens: (spent.inputTokens || 0) + (repairResult.usage.inputTokens || 0),
+            outputTokens: (spent.outputTokens || 0) + (repairResult.usage.outputTokens || 0),
+            cacheReadTokens: (spent.cacheReadTokens || 0) + (repairResult.usage.cacheReadTokens || 0),
+            cacheWriteTokens: (spent.cacheWriteTokens || 0) + (repairResult.usage.cacheWriteTokens || 0),
+            reasoningTokens: (spent.reasoningTokens || 0) + (repairResult.usage.reasoningTokens || 0),
+            totalTokens: (spent.totalTokens || 0) + (repairResult.usage.totalTokens || 0),
+            steps: (spent.steps || 0) + (repairResult.usage.steps || 0),
+            turns: (spent.turns || 0) + (repairResult.usage.turns || 0),
+            maxStepInputTokens: Math.max(spent.maxStepInputTokens || 0, repairResult.usage.maxStepInputTokens || 0),
+          }
+          const afterRepair = await snapshot(dir)
+          outputs = await collectOutputs({
+            before,
+            after: afterRepair,
+            dir,
+            maxFiles: this.config.workspace.maxOutputFiles,
+            maxBytes: this.config.workspace.maxOutputFileBytes,
+          })
+          verification = await this.verifier.evaluate({ taskText: job.text, files: outputs.selected, answer: result.text, root: dir })
+          if (verification) verification.attempts = 2
+          this.logger?.info('verification repaired', { taskId: job.id, status: verification?.status })
+        }
+      } catch (error) {
+        this.logger?.warn('repair run failed', { taskId: job.id, error })
       }
     }
 

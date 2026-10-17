@@ -117,3 +117,75 @@ test('not required is not mixed with unavailable or partial', async () => {
     await env.close()
   }
 })
+
+test('a failed check triggers one repair run and can end as done', async () => {
+  let env
+  let attempts = 0
+  const verifier = {
+    enabled: true,
+    maxAttempts: 1,
+    applicable: () => true,
+    notRequired: () => ({ status: 'not_required', criteria: [], limitations: [] }),
+    disabled: () => ({ status: 'disabled', criteria: [], limitations: [] }),
+    evaluate: async () => {
+      attempts += 1
+      return attempts === 1
+        ? { status: 'failed', criteria: [{ id: 'sections', status: 'failed', evidence: 'нет раздела' }], limitations: [] }
+        : { status: 'passed', criteria: [{ id: 'sections', status: 'passed', evidence: 'раздел есть' }], limitations: [] }
+    },
+  }
+  let runs = 0
+  env = await createBotHarness({
+    verifier,
+    runner: {
+      async run() {
+        runs += 1
+        await fs.writeFile(path.join(env.ws, 'outbox', 'отчёт.docx'), `x${runs}`)
+        return docRunner().run()
+      },
+    },
+  })
+  try {
+    await env.bot.handleUpdate(message('сделай отчёт в docx'))
+    await env.bot.worker
+    assert.equal(runs, 2, 'исполнитель запущен повторно')
+    const record = env.journal.recent(1)[0]
+    assert.equal(record.status, STATUS.done)
+    assert.equal(record.verification.status, 'passed')
+    assert.equal(record.verification.attempts, 2)
+  } finally {
+    await env.close()
+  }
+})
+
+test('an ambiguous format is asked about before the run', async () => {
+  let runs = 0
+  const env = await createBotHarness({
+    verifier: {
+      enabled: true,
+      applicable: () => true,
+      ambiguous: () => true,
+      clarify: () => 'Какой формат нужен — DOCX или PDF?',
+      evaluate: async () => ({ status: 'passed', criteria: [], limitations: [] }),
+      disabled: () => ({ status: 'disabled', criteria: [], limitations: [] }),
+      notRequired: () => ({ status: 'not_required', criteria: [], limitations: [] }),
+    },
+    runner: {
+      async run() {
+        runs += 1
+        return docRunner().run()
+      },
+    },
+  })
+  try {
+    await env.bot.handleUpdate(message('сделай отчёт'))
+    await env.bot.worker
+    assert.equal(runs, 0, 'исполнитель не запускался')
+    const record = env.journal.recent(1)[0]
+    assert.equal(record.status, STATUS.awaiting_owner)
+    assert.match(record.question, /формат/i)
+    assert.ok(env.platform.sent.some((entry) => /Какой формат нужен/.test(entry.markdown)))
+  } finally {
+    await env.close()
+  }
+})

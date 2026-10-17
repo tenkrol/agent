@@ -156,6 +156,11 @@ async function main() {
       files,
       criteria: deriveCriteria({ taskText, files }).criteria,
     }),
+    ambiguous: ({ taskText }) => {
+      const derived = deriveCriteria({ taskText, files: [] })
+      return derived.kind === 'none' && /файл|документ|отчёт|презентац|таблиц/i.test(String(taskText))
+    },
+    clarify: () => 'Какой формат результата нужен — DOCX, XLSX, PDF или другой?',
     evaluate: (input) => verify({
       ...input,
       allowlist: config.verify.allowlist,
