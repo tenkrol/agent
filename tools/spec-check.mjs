@@ -32,6 +32,8 @@ for (const entry of dirs(changesDir)) {
   const dir = path.join(changesDir, entry.name)
   if (!/^PLA-\d+$/.test(entry.name)) {
     problems.push(`change «${entry.name}»: имя должно быть PLA-<номер>, например PLA-13`)
+  } else if (fs.existsSync(path.join(changesDir, 'archive', entry.name))) {
+    problems.push(`change «${entry.name}»: номер уже занят архивом`)
   }
   for (const required of ['proposal.md', 'design.md', 'tasks.md']) {
     if (!fs.existsSync(path.join(dir, required))) problems.push(`change «${entry.name}»: нет ${required}`)

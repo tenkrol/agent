@@ -10,7 +10,10 @@
   "main": "src/index.mjs",
   "scripts": {
     "start": "node src/index.mjs",
-    "test": "node --test test/*.test.mjs"
+    "spec": "bash tools/spec-check.sh",
+    "pretest": "bash tools/spec-check.sh",
+    "test": "node --test --test-force-exit test/*.test.mjs",
+    "check": "bash tools/spec-check.sh && node --test --test-force-exit test/*.test.mjs"
   },
   "license": "MIT"
 }

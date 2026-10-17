@@ -717,3 +717,16 @@ src/
   `PLA-<номер>`), `openspec/specs/workflow/spec.md`, `conventions.md`, `README.md`,
   `AGENTS.md`, `project.md`.
 - Следующий свободный номер — **PLA-13**.
+
+## 2026-10-17: правило PLA закреплено для любых сессий и харнессов
+
+Вопрос владельца: увидят ли правило другая сессия или другой харнесс. Закрыто так:
+- `AGENTS.md` — точка входа: формат `PLA-<номер>`, правило «новый номер = последний в
+  archive + 1», текущий свободный — `PLA-13`, ссылки на ритуал и карту архива;
+- `openspec/README.md` — как выбирать номер; `changes/archive/README.md` — номер → что это;
+- `tools/spec-check.sh` — теперь проверяет и маску `PLA-<номер>`, и **повтор номера**
+  (папка с номером, уже занятым архивом, валит проверку);
+- `package.json`: `pretest` запускает `spec-check`, поэтому любой прогон `npm test`
+  проверяет правила; добавлены `npm run spec` и `npm run check`;
+- для харнессов, которые читают не `AGENTS.md`: `CLAUDE.md` (Claude Code) и
+  `.github/copilot-instructions.md` (GitHub Copilot) со ссылкой на `AGENTS.md`.
