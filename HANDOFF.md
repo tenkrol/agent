@@ -705,3 +705,15 @@ src/
   `/etc/tg-agent/outbox.env` (подключается drop-in `dsh-agent.service.d/outbox.conf`).
   Поэтому ad-hoc shell без этого файла получает 401 — это не поломка.
 - Дельта влита в `openspec/specs/bot-link/spec.md`, изменение в архиве.
+
+## 2026-10-17: новый формат имён изменений — PLA-<номер>
+
+- Папки изменений теперь называются `openspec/changes/PLA-<номер>` (сквозной номер по
+  порядку), архив — `openspec/changes/archive/PLA-<номер>`. Даты в имени больше не нужны:
+  дата закрытия видна в этом файле.
+- Переименован весь архив: PLA-1 … PLA-12 — от карты архитектуры до исправления
+  зеркалирования. Карта «номер → что это» — `openspec/changes/archive/README.md`.
+- Правило обновлено во всех местах: `tools/spec-check.mjs` (валидатор теперь требует
+  `PLA-<номер>`), `openspec/specs/workflow/spec.md`, `conventions.md`, `README.md`,
+  `AGENTS.md`, `project.md`.
+- Следующий свободный номер — **PLA-13**.
