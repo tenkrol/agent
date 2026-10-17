@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
-import { createDiskStorage, formatDiskSize, joinPath, webdavPath, YandexDisk } from '../src/yandex-disk.mjs'
+import { createDiskStorage, formatDiskSize, joinPath, webdavPath, YandexDisk } from '../src/integrations/yandex-disk.mjs'
 import { createBotHarness, createTestLogger } from './helpers.mjs'
 
 const TOKEN = 'y0_AgAAAABtest-token'

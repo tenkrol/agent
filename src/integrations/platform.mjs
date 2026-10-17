@@ -12,7 +12,7 @@
  * The core (`bot.mjs`) sees only normalised updates, so the transport details —
  * HTML conversion, message splitting, multipart uploads — stay here.
  */
-import { markdownToTelegramHtml, splitForTelegram } from './format.mjs'
+import { markdownToTelegramHtml, splitForTelegram } from '../format.mjs'
 import { TelegramClient, TelegramError } from './telegram.mjs'
 
 /** Convert a platform id into a stable numeric value where possible. */
