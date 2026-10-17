@@ -623,3 +623,17 @@ bearer-токен. Наружу порт не открыт, TLS не нужен.
   домена). Деплой: сервис active, живая задача выполнена (1 шаг).
 - Дельта влита в `openspec/specs/delivery/spec.md`, изменение в архиве.
 - Следующее в очереди — `extract-bot-link`.
+
+## 2026-10-17: extract-bot-link закрыт
+
+- Домен `src/bot-link/`: `bridge-http.mjs` (вход: протокол, авторизация, ответ) и
+  `mirror.mjs` (правило зеркалирования ответа); публичный API — `index.mjs`.
+- `notify.mjs` переехал в `src/integrations/notify.mjs` (Telegram-клиент для алертов), новый
+  `src/integrations/outbox.mjs` (`postOutbox`) — единственное место с `fetch` для зеркалирования.
+- `bot.mjs` больше не содержит сетевого кода: импортирует `mirrorToAssistant` из домена.
+- Сторожевые тесты: `fetch(`/`node:https` только в `integrations`; `node:http` — в
+  `integrations` и `bot-link`. Тестов 323.
+- Протокол моста и формат зеркалирования не менялись. Живая проверка: задача через мост
+  принята и выполнена (1 шаг).
+- Дельта влита в `openspec/specs/bot-link/spec.md`, изменение в архиве.
+- Следующее в очереди — `extract-autonomy`.
