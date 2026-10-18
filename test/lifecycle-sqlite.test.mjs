@@ -174,3 +174,22 @@ test('park atomically moves a task to awaiting_owner before the question is sent
     assert.equal(queue.claim({ owner: 'w2' }), undefined)
   })
 })
+
+test('recovery requeues journal awaiting when SQLite already returned it to queued', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 'a', requestKey: 'a', payload: { id: 'a' } })
+    const requeued = []
+    const journal = {
+      recover: async () => [],
+      pending: () => [],
+      awaiting: () => [],
+      get: () => ({ status: 'awaiting_owner' }),
+      requeue: async (id, options) => requeued.push({ id, options }),
+    }
+    const lifecycle = createTaskLifecycle({ journal, queueStore: queue })
+    await lifecycle.recover({ recordToJob: (record) => ({ id: record.id }), snapshot: async () => new Map(), workspaceDir: '/tmp' })
+    assert.equal(requeued.length, 1)
+    assert.equal(requeued[0].id, 'a')
+    assert.equal(queue.get('a').status, 'queued')
+  })
+})

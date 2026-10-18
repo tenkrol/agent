@@ -238,7 +238,9 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
         // drain сам дождётся истечения их аренды. Журнал после recover() уже
         // помечает их interrupted — возвращаем в queued до повторного запуска.
         for (const row of queueStore.listPending()) {
-          if (row.status === 'running' && typeof journal?.requeue === 'function') {
+          const journalStatus = journal?.get?.(row.id)?.status
+          const needsRequeue = row.status === 'running' || (row.status === 'queued' && journalStatus && !['queued', 'done', 'partial', 'failed', 'cancelled'].includes(journalStatus))
+          if (needsRequeue && typeof journal?.requeue === 'function') {
             await journal.requeue(row.id, {
               reason: 'восстановление аренды',
               patch: { resumedAt: now() },
