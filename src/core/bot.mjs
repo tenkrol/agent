@@ -143,6 +143,11 @@ export class AgentBot {
    */
   constructor({ config, platform, runner, orchestrator, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, implementer, runners, now = () => new Date() }) {
     this.config = config
+    this.activity = new ActivityStore({
+      file: path.join(config.workspace.stateDir, 'activity.jsonl'),
+      maxEntries: config.activity?.maxEntries ?? 5000,
+      logger,
+    })
     this.platform = platform
     this.runner = runner
     this.runners = runners ?? {}
