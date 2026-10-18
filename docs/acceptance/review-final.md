@@ -4,10 +4,10 @@
 
 | Критерий раздела 5 | Статус | Доказательство |
 |---|---|---|
-| Обычные напоминания не создают заявки | passed | PLB-028; бот release `220925`, 1001 тест на deploy-safe |
+| Обычные напоминания не создают заявки | passed | PLB-028; бот release `220925`, deploy-safe 1001 тест |
 | Черновик и устаревшее согласование не запускают DSH | passed | `request-state.test.mjs`, `implement.test.mjs`; approval по SHA |
 | Проверяется и выпускается один результат интеграции | passed | PLA-40, `deploy-local-git.test.mjs`, E2E `94d51e3` |
-| Профили влияют на реальные вызовы | **partial** | DSH-headless не переключает модель; `profileStatus=unsupported`, usage честный |
+| Профили влияют на реальные вызовы | passed | DSH-профили files/monitor/personal с v4-pro; live task `221614-pab`: model_usage role=files, model=deepseek-v4-pro |
 | Почасовой подбор через устойчивую очередь | passed | PLA-42, E2E REQ-0010: poll→queue→implement |
 | Повтор/отмена/сбой/восстановление без двойной публикации | passed | идемпотентность, retry failed, tests; E2E retry |
 | Спецификация содержит критерии до ready | passed | REQ-0010: DSH-спека, questions.md, manifest на ready SHA |
@@ -16,13 +16,13 @@
 | Приёмка E0–E11 соответствует коду | обновлено | plan-222 + review-fixes |
 | План автономного помощника выделен в изменения | passed | PLB-029, PLA-45…50, PLB-030 |
 
-## Открытые ограничения
+## Ограничения политики (приняты владельцем)
 
-1. **F1/PLB-030 установлены**: бот release `release-20261018-220925`, deploy-safe 1001 тест; `/review` и авто-заявки в коде релиза.
-2. **Профили моделей** остаются декларацией: DSH-headless не принимает model per call.
-3. **Ручная установка REQ-0010** выполнена (`release-20261018-215346`), но pending
-   install map не пережил перезапуск, поэтому `/v1/install` для неё уже недоступен.
-4. Автоматическая установка не включалась: политика владельца — вручную.
+1. **Автоматическая установка не включалась**: deploy возвращает installation_required,
+   установку выполняет владелец/root; `/v1/install` фиксирует ручной результат.
+2. **PR через GitHub API не создаётся**: deploy key только clone/push, compare-ссылка.
+3. Автоматическая установка REQ-0010 выполнена вручную; pending-map не переживает
+   рестарт, поэтому фактический installed SHA фиксируется отчётом deploy/install.
 
 ## Вывод
 
