@@ -94,3 +94,20 @@ test('a personal result accepted before delivery is re-sent from the outbox', as
     await env.close()
   }
 })
+
+test('a stale accept gate prevents publishing a routed result', async () => {
+  const env = await createBotHarness()
+  try {
+    const events = []
+    env.bot.delivery = { enqueue: async (event) => events.push(event) }
+    await env.bot.reportResult({
+      job: { id: 'stale-1', chatId: 42, route: { platform: 'telegram', chatId: '42' }, resultVersion: 1 },
+      result: { ok: true, text: 'готово', usage: { totalTokens: 1, steps: 1 }, durationMs: 5 },
+      status: 'done',
+      leaseContext: { accept: () => ({ ok: false, stale: true }) },
+    })
+    assert.equal(events.length, 0, 'stale accept не публикует результат')
+  } finally {
+    await env.close()
+  }
+})

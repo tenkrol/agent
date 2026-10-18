@@ -193,3 +193,26 @@ test('recovery requeues journal awaiting when SQLite already returned it to queu
     assert.equal(queue.get('a').status, 'queued')
   })
 })
+
+test('a stale attempt is aborted and does not call onError after losing its lease', async () => {
+  await withQueue(async (queue) => {
+    const lifecycle = createTaskLifecycle({ journal: { get: () => ({ status: 'running' }) }, queueStore: queue })
+    lifecycle.enqueue({ id: 'a', requestKey: 'a', payload: { id: 'a' } })
+    let errors = 0
+    let aborted = false
+    await lifecycle.drain({
+      leaseTtlMs: 20,
+      runTask: async (job, context) => {
+        await new Promise((resolve) => {
+          if (context.leaseSignal.aborted) resolve()
+          else context.leaseSignal.addEventListener('abort', resolve, { once: true })
+        })
+        aborted = context.leaseSignal.aborted
+        throw new Error('lost lease')
+      },
+      onError: async () => { errors += 1 },
+    })
+    assert.equal(aborted, true)
+    assert.equal(errors, 0, 'onError не вызывается у stale-попытки')
+  })
+})

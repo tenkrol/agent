@@ -215,6 +215,10 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
           if (stillOwns) {
             if (onError) await onError(job, error)
             else throw error
+          } else {
+            // Потерянная аренда: не забирать задачу сразу повторно, иначе цикл
+            // бесконечно перезахватывает собственный stale-запуск.
+            break
           }
         } finally {
           clearInterval(heartbeat)
