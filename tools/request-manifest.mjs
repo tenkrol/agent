@@ -24,7 +24,8 @@ export function validateManifest(manifest) {
   if (!Number.isInteger(manifest.revision) || manifest.revision < 1) errors.push('revision должен быть >= 1')
   if (!POLICIES.has(manifest.executionPolicy)) errors.push('executionPolicy: reviewed|policy')
   if (!RELEASE.has(manifest.releasePolicy)) errors.push('releasePolicy: manual|automatic-after-checks')
-  if (!Array.isArray(manifest.components) || manifest.components.length === 0) errors.push('components обязателен')
+  if (!Array.isArray(manifest.components)) errors.push('components обязателен')
+  else if (manifest.components.length === 0 && manifest.draft !== true) errors.push('components обязателен (или draft:true)')
   const seen = new Set()
   for (const [index, component] of (manifest.components ?? []).entries()) {
     const prefix = `components[${index}]`
