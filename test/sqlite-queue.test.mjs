@@ -149,3 +149,15 @@ test('accept commits terminal status and outbox atomically', async () => {
     assert.equal(queue.pendingOutbox().length, 0)
   })
 })
+
+test('accept after lease recovery is stale and writes no outbox', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 't1', now: 1000 })
+    const old = queue.claim({ owner: 'w1', ttlMs: 10, now: 1000 })
+    queue.recoverExpired({ now: 2000 })
+    const accepted = queue.accept({ taskId: 't1', generation: old.generation, owner: 'w1', status: 'done', outbox: { eventId: 'e', event: {} }, now: 2000 })
+    assert.equal(accepted.ok, false)
+    assert.equal(accepted.stale, true)
+    assert.equal(queue.pendingOutbox().length, 0)
+  })
+})
