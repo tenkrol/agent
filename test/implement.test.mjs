@@ -102,3 +102,34 @@ test('POST /v1/implement validates requestId and calls the service', async () =>
     await server.stop()
   }
 })
+
+
+test('failed checks trigger repair and block the push when still red', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'implement-checks-'))
+  try {
+    const specDir = path.join(root, 'spec')
+    await fs.mkdir(path.join(specDir, 'requests', 'REQ-0011'), { recursive: true })
+    await fs.writeFile(path.join(specDir, 'requests', 'REQ-0011', 'manifest.json'), JSON.stringify({
+      components: [{ repository: 'tenkrol/agent', changeId: 'PLA-99', branch: 'spec/REQ-0011-PLA-99', specificationCommit: 'b'.repeat(40) }],
+    }))
+    await fs.writeFile(path.join(specDir, 'requests', 'REQ-0011', 'request.md'), '# REQ-0011')
+    const pushes = []
+    let checksCalls = 0
+    const service = createImplementService({
+      baseDir: path.join(root, 'work'),
+      maxRepairs: 1,
+      components: [{ repository: 'tenkrol/agent', keyPath: '/tmp/key', checks: [['node', '--test']] }],
+      git: {
+        async clone(options) { return { dir: options.dir, sha: 'a'.repeat(40) } },
+        async commitAndPush(options) { pushes.push(options); return { sha: 'c'.repeat(40), compareUrl: 'x' } },
+      },
+      runner: { async run() { return { ok: true, usage: {} } } },
+      runChecks: async () => { checksCalls += 1; return { checks: [{ command: 'node --test', exitCode: 1, stdout: 'fail', stderr: '' }] } },
+    })
+    await assert.rejects(() => service.implement({ requestId: 'REQ-0011', specRepo: 'x', specDir, keyPath: '/tmp/key' }), /проверки/)
+    assert.equal(pushes.length, 0)
+    assert.equal(checksCalls, 2)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
