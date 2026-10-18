@@ -88,7 +88,8 @@ export function toProviderUsage(usage = {}) {
 export function chooseExecutorId({ task = '', executorId = 'dsh' } = {}) {
   if (executorId !== 'dsh') return executorId
   const text = String(task)
-  if (/(сервер|монитор|наблюд|диск|памят|процесс|журнал|алерт|alert|health|метрик|uptime|нагрузк)/i.test(text)) return 'monitor'
+  if (/(сервер|монитор|наблюд|диск|процесс|журнал|алерт|alert|health|метрик|uptime|нагрузк)/i.test(text)) return 'monitor'
+  if (/(напомн|календар|запомн|предпочт|личн|обо мне|ты обо мне|what do you remember)/i.test(text)) return 'personal'
   if (/(docx|xlsx|pptx|pdf|файл|документ|таблиц|презентац|архив|картин|изображен)/i.test(text)) return 'files'
   return 'dsh'
 }
@@ -172,6 +173,16 @@ export class AgentBot {
           runner: { run: (request) => this.runner.run(request) },
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.monitor?.model ?? config.model?.name,
+        }),
+        createDshExecutor({
+          id: 'personal',
+          capabilities: ['personal', 'memory', 'reminders', 'preferences'],
+          taskPrefix: () => `Ты персональный агент владельца. Учитывай только эти факты памяти:\n`
+            + `${this.memory?.render?.() ?? 'память пуста'}\n\n`
+            + 'Личные задачи: напоминания, предпочтения, планы, календарь. Не выдумывай факты.\n\n',
+          runner: { run: (request) => this.runner.run(request) },
+          limits: config.limits ?? {},
+          modelProfile: config.agentProfiles?.personal?.model ?? config.model?.name,
         }),
         {
           id: 'quick',

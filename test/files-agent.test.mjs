@@ -37,7 +37,8 @@ test('orchestrator routes a task to the selected executor', async () => {
 
 
 test('chooseExecutorId routes host tasks to monitor, files to files, explicit ids untouched', () => {
-  assert.equal(chooseExecutorId({ task: 'проверь диск и память сервера' }), 'monitor')
+  assert.equal(chooseExecutorId({ task: 'проверь диск и сервер' }), 'monitor')
+  assert.equal(chooseExecutorId({ task: 'что ты обо мне помнишь?' }), 'personal')
   assert.equal(chooseExecutorId({ task: 'сделай xlsx' }), 'files')
   assert.equal(chooseExecutorId({ task: 'сделай xlsx', executorId: 'quick' }), 'quick')
 })

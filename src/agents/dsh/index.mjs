@@ -14,7 +14,8 @@ export function createDshExecutor({ runner, id = 'dsh', capabilities = ['code', 
     tools: [...tools],
     status: 'ready',
     async execute({ task, sessionId, signal, id: attemptId, tokenBudget, maxSteps, timeoutMs, workspaceDir } = {}) {
-      const result = await runner.run({ task: `${taskPrefix}${task}`, sessionId, signal, id: attemptId, tokenBudget, maxSteps, timeoutMs, workspaceDir })
+      const prefix = typeof taskPrefix === 'function' ? taskPrefix({ task, workspaceDir }) : taskPrefix
+      const result = await runner.run({ task: `${prefix}${task}`, sessionId, signal, id: attemptId, tokenBudget, maxSteps, timeoutMs, workspaceDir })
       return {
         ...result,
         usage: result?.usage ?? { totalTokens: undefined, steps: undefined, unknown: true },
