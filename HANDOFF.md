@@ -1320,3 +1320,13 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - taskPrefix-функция с memory.render(); monitor→personal→files→dsh, явный id сохраняется;
 - live задача `193014-vzl` «что ты обо мне помнишь» → done;
 - release `release-20261018-192911`, active; тесты 494.
+
+## 2026-10-18: E3/E11 закрыты, план E0–E11 принят
+
+- PLA-27 в архиве: spec-репозиторий, manifest, deploy keys, PR вручную/compare.
+- PLB-027 (бот): авто-заявка из обычного сообщения; release assistant
+  `release-20261018-202223`, active; тесты 971.
+- PLA-38: приёмка с доказательствами; принятые ограничения: PR вручную, install
+  владельцем, каркасные спеки E4.
+- Тесты агента 494. E11 пройден с ограничениями, зафиксированными в
+  `docs/acceptance/plan-222.md`.
