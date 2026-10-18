@@ -1170,3 +1170,17 @@ Merge/деплой PLA-23 не выполнялись.
   больше не роняет задачу.
 - Тесты: 446 зелёных (полный прогон `--test-concurrency=1`). Дельты storage/execution
   влиты, PLA-20 в архиве; активных изменений нет.
+
+## 2026-10-18: PLA-24 / E0 закрыт
+
+- Ветка `e0-execution-publication` влита в `main`, изменение в архиве.
+- `release-20261018-080807` установлен, сервис active; SQLite, workers=2,
+  per-task workspace.
+- E0-A: потеря аренды abort-ит runner и не публикует stale-результат.
+- E0-B: accept/park + outbox для routed/personal/quick/плана/вопроса/вариантов,
+  файлы в personal outbox, отметка публикации, stale accept/onError.
+- E0-C: сверка SQLite↔JSONL в обе стороны, requeue-сценарий, остановка stale worker,
+  SQLite как источник при откаченном JSONL.
+- Живая проверка: `080447-bh7` и `080821-da1` → done/passed; исправлен путь
+  Яндекс.Диска к файлу в per-task workspace (uploadToDisk использовал общий dir).
+- Тесты: 459. E0 считается закрытым; следующие этапы — E1/E2.
