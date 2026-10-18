@@ -1236,3 +1236,11 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 Незакрытые ветки (не мержить без проверки/PR): `e3-github-spec-process`,
 `e3-req-0002-agent`, `e3-req-0002-assistant`, `e4-request-draft`, `e4-request-command`
 (частично влиты в main/app-translation).
+
+## 2026-10-18 (off-peak run): E4-анализ компонентов
+
+- release `release-20261018-124331`, сервис active.
+- `analyzeRequest`: маркеры компонентов assistant/agent, оба, неясно → question.
+- Live: `REQ-0004` (оба компонента, без вопроса), `REQ-0005` (неясно, вопрос владельцу).
+- `analysis.json` в draft; API возвращает analysis/question.
+- Тесты: 478. E4 всё ещё не закрыт: нет реальных компонентных OpenSpec/changeId.
