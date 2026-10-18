@@ -341,6 +341,8 @@ async function main() {
       routeConfig: { botId: config.bridge.routeBotId, chatId: config.bridge.routeChatId },
       files,
       maxFileBytes: config.files.maxBytes,
+      agents: () => bot.orchestrator?.registry?.describe?.() ?? [],
+      activity: (query) => bot.activity?.recent?.(query) ?? [],
       onSubmitV2: (request) => bot.submitV2Task(request),
       getTask: (id) => bot.taskState(id),
       onReply: (id, body) => bot.replyTask(id, body),

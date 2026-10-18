@@ -46,6 +46,7 @@ import { createBudget, minLimit } from '../orchestration/budget.mjs'
 import { createDshExecutor } from '../agents/dsh/index.mjs'
 import { createTaskLifecycle } from '../orchestration/lifecycle-manager.mjs'
 import { SqliteTaskQueue } from '../storage/sqlite-queue.mjs'
+import { ActivityStore } from '../storage/activity.mjs'
 import { buildQuestionEvent, buildResultEvent } from '../bot-link/events.mjs'
 import { dayKey } from '../storage/usage.mjs'
 import {
@@ -262,6 +263,7 @@ export class AgentBot {
 
     await this.journal?.load()
     await this.journal?.compact()
+    await this.activity?.load?.()
     // Принятые задачи и прерванные выполнения восстанавливаются до опроса Telegram:
     // владелец не должен видеть «пустой» агент, пока очередь ещё не поднята.
     await this.memory?.cleanupTasks?.(this.config.memory?.taskRetentionDays ?? 7)
@@ -2063,6 +2065,7 @@ export class AgentBot {
       }
     }
     if (!job._queuedByLifecycle) this.lifecycle.enqueue(job)
+    this.activity?.record?.({ type: 'queued', taskId: job.id, chatId: job.chatId, userId: job.userId, agent: job.route ? 'dsh' : 'dsh' })
     if (this.running) {
       await this.safeSend(job.chatId, `📋 Принял, задача ${job.id} в очереди (позиция ${this.queue.length}).`)
     }
@@ -2601,6 +2604,7 @@ export class AgentBot {
       startedAt,
       attemptId: `${job.id}-1`,
     })
+    this.activity?.record?.({ type: 'started', taskId: job.id, chatId: job.chatId, agent: 'dsh', stage: 'executing' })
     this.progress = { steps: 0, tool: '', sessionId }
     const progressTimer = setInterval(() => {
       void this.publishProgress(statusMessageId, job)
@@ -2804,6 +2808,7 @@ export class AgentBot {
       return
     }
     const stoppedByShutdown = statusKind === STATUS.interrupted
+    this.activity?.record?.({ type: 'completed', taskId: job.id, agent: 'dsh', status: statusKind, tokens: spent.totalTokens, usd: cost.usd })
     await this.lifecycle.finishTask(job.id, {
       status: statusKind,
       verification,
@@ -2818,6 +2823,7 @@ export class AgentBot {
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
     const resultFiles = job.route ? await this.registerResultFiles(job, outputs) : []
     await this.reportResult({ job, result, status: statusKind, statusMessageId, diskPaths, resultFiles, verification, leaseContext, outputs })
+    this.activity?.record?.({ type: 'delivered', taskId: job.id, agent: 'dsh', status: statusKind })
     if (!job.route) {
       await this.sendOutputs({ job, outputs })
       await this.sendVoiceAnswer({ job, result })

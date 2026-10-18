@@ -98,6 +98,8 @@ export class BridgeServer {
     getTask,
     onReply,
     onCancel,
+    agents,
+    activity,
     files,
     routeConfig = {},
     contractV2 = false,
@@ -114,6 +116,8 @@ export class BridgeServer {
     this.getTask = getTask
     this.onReply = onReply
     this.onCancel = onCancel
+    this.agents = agents
+    this.activity = activity
     this.files = files
     this.routeConfig = routeConfig
     this.contractV2 = Boolean(contractV2)
@@ -173,6 +177,7 @@ export class BridgeServer {
 
     const known = pathname === '/bridge' || pathname === '/v1/files' || pathname.startsWith('/v1/files/')
       || pathname === '/v1/tasks' || pathname.startsWith('/v1/tasks/') || pathname === '/v1/capabilities'
+      || pathname === '/v1/agents' || pathname === '/v1/activity'
     if (!known) {
       send(404, { ok: false, error: 'not found' })
       return
@@ -199,6 +204,17 @@ export class BridgeServer {
           events: true,
           serviceEvents: true,
         })
+        return
+      }
+      if (request.method === 'GET' && pathname === '/v1/agents') {
+        send(200, { ok: true, contract: 2, agents: await this.agents?.() ?? [] })
+        return
+      }
+      if (request.method === 'GET' && pathname === '/v1/activity') {
+        const limit = Number(url.searchParams.get('limit')) || 50
+        const agent = url.searchParams.get('agent') || undefined
+        const taskId = url.searchParams.get('taskId') || undefined
+        send(200, { ok: true, contract: 2, events: await this.activity?.({ limit, agent, taskId }) ?? [] })
         return
       }
       if (request.method === 'POST' && pathname === '/bridge') {
