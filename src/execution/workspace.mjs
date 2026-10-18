@@ -318,3 +318,32 @@ export async function prepareTaskWorkspace(baseDir, taskId, { perTask = false } 
   }
   return dir
 }
+
+
+/** Удалить старые tasks/<id>, не трогая активные/незавершённые. */
+export async function pruneTaskWorkspaces(baseDir, { retentionDays = 14, activeIds = [], now = Date.now() } = {}) {
+  if (!retentionDays || retentionDays <= 0) return 0
+  const root = path.join(baseDir, 'tasks')
+  let entries
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+  const active = new Set(activeIds.map(String))
+  const cutoff = now - retentionDays * 24 * 3600 * 1000
+  let removed = 0
+  for (const entry of entries) {
+    if (!entry.isDirectory() || active.has(entry.name)) continue
+    const dir = path.join(root, entry.name)
+    try {
+      const stat = await fs.stat(dir)
+      if ((stat.mtimeMs ?? 0) >= cutoff) continue
+      await fs.rm(dir, { recursive: true, force: true })
+      removed += 1
+    } catch {
+      // Удаление — обслуживание, не повод не стартовать.
+    }
+  }
+  return removed
+}

@@ -14,6 +14,16 @@ export function createExecutorRegistry({ executors = [] } = {}) {
   return {
     ids: () => [...byId.keys()],
     capabilities: (id) => byId.get(id)?.capabilities ?? [],
+    describe() {
+      return [...byId.values()].map((executor) => ({
+        id: executor.id,
+        capabilities: [...(executor.capabilities ?? [])],
+        limits: { ...(executor.limits ?? {}) },
+        modelProfile: executor.modelProfile,
+        tools: [...(executor.tools ?? [])],
+        status: executor.status ?? 'ready',
+      }))
+    },
     has: (id) => byId.has(id),
     get(id) {
       const executor = byId.get(id)

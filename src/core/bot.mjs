@@ -55,6 +55,7 @@ import {
   ensureWorkspace,
   formatSize,
   pruneReservedDirs,
+  pruneTaskWorkspaces,
   readDeliverable,
   snapshot,
 } from '../execution/workspace.mjs'
@@ -137,7 +138,11 @@ export class AgentBot {
       // Адаптер читает this.runner на каждом запуске: тесты и переключение
       // исполнителя не должны требовать пересоздания бота.
       executors: [
-        createDshExecutor({ runner: { run: (request) => this.runner.run(request) } }),
+        createDshExecutor({
+          runner: { run: (request) => this.runner.run(request) },
+          limits: config.limits ?? {},
+          modelProfile: config.model?.name,
+        }),
         {
           id: 'quick',
           capabilities: ['quick'],
@@ -248,6 +253,11 @@ export class AgentBot {
       this.logger?.info('workspace ready', { dir, instructionsCreated: created })
     }
     const removed = await pruneReservedDirs(dir, { retentionDays: this.config.workspace.retentionDays })
+    const prunedTasks = await pruneTaskWorkspaces(dir, {
+      retentionDays: this.config.workspace.retentionDays,
+      activeIds: this.journal?.records ? [...this.journal.records.keys()] : [],
+    })
+    if (prunedTasks > 0) this.logger?.info('task workspaces pruned', { removed: prunedTasks })
     if (removed > 0) this.logger?.info('old reserved files pruned', { removed })
 
     await this.journal?.load()
@@ -1985,6 +1995,15 @@ export class AgentBot {
       await this.safeSend(job.chatId, `Очередь заполнена (${QUEUE_LIMIT}). Дождитесь окончания или /cancel.`)
       return { queued: false, reason: 'очередь заполнена' }
     }
+    const perUserLimit = this.config.limits.perUserConcurrency ?? 0
+    if (perUserLimit > 0 && job.userId !== undefined && this.journal?.records) {
+      const active = [...this.journal.records.values()].filter((record) => String(record.userId) === String(job.userId)
+        && [STATUS.queued, STATUS.running, STATUS.awaiting_owner, STATUS.verifying].includes(record.status)).length
+      if (active >= perUserLimit) {
+        await this.safeSend(job.chatId, `У вас уже ${active} незавершённых задач (лимит ${perUserLimit}). Дождитесь завершения или /cancel.`)
+        return { queued: false, reason: 'лимит задач пользователя' }
+      }
+    }
     if (this.config.limits.dailyTokenLimit > 0 && this.usage.limitReached(this.now(), this.config.runtime.timeZone)) {
       await this.safeSend(job.chatId, `Дневной лимит токенов исчерпан (${this.config.limits.dailyTokenLimit.toLocaleString('ru-RU')}). Новые задачи — завтра.`)
       await this.alert(`⚠️ Дневной лимит исчерпан, задача ${job.id} не запущена.`)
@@ -2570,7 +2589,8 @@ export class AgentBot {
     // One parent signal for execution, verification and repair: cancel/stop aborts
     // exactly this controller; the orchestrator links every stage to it.
     const startedAt = attemptStartedAt
-    const sessionId = job.freshSession || sessionTooBig
+    const perTaskFresh = this.config.workspace?.perTask && !job.continuationOf
+    const sessionId = job.freshSession || sessionTooBig || perTaskFresh
       ? undefined
       : job.sessionId
         ?? (this.config.runtime.sessionContinuity ? this.state.get(`session:${job.chatId}`) : undefined)

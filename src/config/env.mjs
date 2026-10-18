@@ -24,6 +24,7 @@ export const DEFAULTS = {
   TASK_TOKEN_WARN: '300000',
   // Предел шагов на задачу: расход ≈ шаги × контекст.
   TASK_MAX_STEPS: '16',
+  TASK_PER_USER_CONCURRENCY: '0',
   QUEUE_STORE: 'jsonl',
   QUEUE_DB: '',
   QUEUE_WORKERS: '1',

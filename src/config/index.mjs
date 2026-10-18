@@ -78,6 +78,7 @@ export function loadConfig(env = process.env) {
       taskTokenBudget: positiveInt(read(env, 'TASK_TOKEN_BUDGET'), 'TASK_TOKEN_BUDGET', { min: 0, max: 1_000_000_000, allowZero: true }),
       taskTokenWarn: positiveInt(read(env, 'TASK_TOKEN_WARN'), 'TASK_TOKEN_WARN', { min: 0, max: 1_000_000_000, allowZero: true }),
       taskMaxSteps: positiveInt(read(env, 'TASK_MAX_STEPS'), 'TASK_MAX_STEPS', { min: 0, max: 500, allowZero: true }),
+      perUserConcurrency: positiveInt(read(env, 'TASK_PER_USER_CONCURRENCY'), 'TASK_PER_USER_CONCURRENCY', { min: 0, max: 50, allowZero: true }),
     },
     queue: {
       store: choice(read(env, 'QUEUE_STORE'), 'QUEUE_STORE', ['jsonl', 'sqlite'], 'jsonl'),
