@@ -142,11 +142,12 @@ export class AgentBot {
         createDshExecutor({
           runner: { run: (request) => this.runner.run(request) },
           limits: config.limits ?? {},
-          modelProfile: config.model?.name,
+          modelProfile: config.agentProfiles?.dsh?.model ?? config.model?.name,
         }),
         {
           id: 'quick',
           capabilities: ['quick'],
+          modelProfile: config.agentProfiles?.quick?.model ?? config.routing?.model,
           execute: async ({ task, signal }) => {
             const quick = await this.quick.answer({ task, memory: this.memory?.render() ?? '', signal })
             return {
@@ -1413,6 +1414,7 @@ export class AgentBot {
           if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage) => {
+          this.activity?.record?.({ type: 'model_usage', taskId: job.id, agent: 'quick', tokens: usage?.totalTokens, unknown: usage?.totalTokens === undefined })
           if ((usage?.totalTokens ?? 0) > 0) {
             this.usage.record({
               usage: toProviderUsage(usage),
@@ -2653,6 +2655,7 @@ export class AgentBot {
           if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage, info) => {
+          this.activity?.record?.({ type: 'model_usage', taskId: job.id, agent: 'dsh', stage: info?.stage, tokens: usage?.totalTokens, unknown: Boolean(info?.unknown || usage?.totalTokens === undefined) })
           if (info?.unknown || usage?.totalTokens === undefined) usageUnknown = true
           addUsage(usage)
           if ((usage?.totalTokens ?? 0) > 0 || (usage?.steps ?? 0) > 0) {

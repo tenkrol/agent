@@ -341,7 +341,15 @@ async function main() {
       routeConfig: { botId: config.bridge.routeBotId, chatId: config.bridge.routeChatId },
       files,
       maxFileBytes: config.files.maxBytes,
-      agents: () => bot.orchestrator?.registry?.describe?.() ?? [],
+      agents: () => [
+        {
+          id: 'orchestrator',
+          capabilities: ['tasks', 'lifecycle', 'budget'],
+          modelProfile: botConfig.agentProfiles?.orchestrator?.model,
+          status: 'ready',
+        },
+        ...(bot.orchestrator?.registry?.describe?.() ?? []),
+      ],
       activity: (query) => bot.activity?.recent?.(query) ?? [],
       onSubmitV2: (request) => bot.submitV2Task(request),
       getTask: (id) => bot.taskState(id),
