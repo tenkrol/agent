@@ -182,6 +182,10 @@ export class AgentBot {
     this.mirror = mirror
     this.instructionsPath = instructionsPath
     this.now = now
+    // Параллельные workers без изоляции workspace/runner/progress запрещены.
+    if (Number(config.queue?.workers ?? 1) > 1) {
+      throw new Error('QUEUE_WORKERS>1 запрещён: workspace/runner/progress не изолированы на задачу')
+    }
     // Очередь, восстановление, awaiting и завершение принадлежат lifecycle.
     // SQLite включается только явно: по умолчанию остаётся проверенный JSONL.
     const queueStore = config.queue?.store === 'sqlite'
@@ -2310,7 +2314,7 @@ export class AgentBot {
 
   async drain() {
     return this.lifecycle.drain({
-      runTask: (job) => this.executeTask(job),
+      runTask: (job, context) => this.executeTask(job, context),
       isStopping: () => this.stopping,
       workers: this.config.queue?.workers ?? 1,
       leaseTtlMs: this.config.queue?.leaseTtlMs ?? 60_000,
@@ -2325,7 +2329,9 @@ export class AgentBot {
   // ─── one task ─────────────────────────────────────────────────────────────
 
   /** One task: intake, DSH run, usage, files, answer — or a parked question. */
-  async executeTask(job) {
+  async executeTask(job, leaseContext = {}) {
+    const stale = () => Boolean(leaseContext.leaseSignal?.aborted || (leaseContext.owns && !leaseContext.owns()))
+    if (stale()) return
     const { dir } = this.config.workspace
     const timeZone = this.config.runtime.timeZone
 
@@ -2640,6 +2646,10 @@ export class AgentBot {
       this.lifecycle.finish(job.id)
     }
 
+    if (stale()) {
+      this.logger?.warn('stale attempt dropped before terminal/report', { taskId: job.id })
+      return
+    }
     // A run without a verification port still needs its output files collected.
     if (!collected) {
       const afterRun = await snapshot(dir)
@@ -2707,6 +2717,10 @@ export class AgentBot {
       return
     }
 
+    if (stale()) {
+      this.logger?.warn('stale attempt dropped before close', { taskId: job.id })
+      return
+    }
     const stoppedByShutdown = statusKind === STATUS.interrupted
     await this.lifecycle.finishTask(job.id, {
       status: statusKind,

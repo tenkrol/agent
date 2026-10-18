@@ -20,15 +20,16 @@ const withQueue = async (fn) => {
   }
 }
 
-test('two workers drain a shared SQLite queue without running a task twice', async () => {
+test('parallel workers are rejected and one worker drains the queue once', async () => {
   await withQueue(async (queue) => {
     const journal = { get: () => ({ status: 'done' }) }
     const lifecycle = createTaskLifecycle({ journal, queueStore: queue })
     lifecycle.enqueue({ id: 'a', requestKey: 'a' })
     lifecycle.enqueue({ id: 'b', requestKey: 'b' })
     const seen = []
+    await assert.rejects(() => lifecycle.drain({ workers: 2, runTask: async () => {} }), /запрещён/)
     await lifecycle.drain({
-      workers: 2,
+      workers: 1,
       runTask: async (job) => { seen.push(job.id); await new Promise((resolve) => setTimeout(resolve, 10)) },
     })
     assert.deepEqual(seen.sort(), ['a', 'b'])
@@ -68,5 +69,31 @@ test('a parked task leaves the queue as awaiting instead of being re-run', async
     await lifecycle.drain({ runTask: async () => {} })
     assert.equal(queue.count(), 0)
     assert.equal(queue.get('a').status, 'awaiting_owner')
+  })
+})
+
+test('clearQueue cancels queued SQLite tasks so claim cannot return them', async () => {
+  await withQueue(async (queue) => {
+    const transitions = []
+    const journal = { transition: async (id, to) => transitions.push({ id, to }) }
+    const lifecycle = createTaskLifecycle({ journal, queueStore: queue })
+    lifecycle.enqueue({ id: 'a', requestKey: 'a' })
+    lifecycle.enqueue({ id: 'b', requestKey: 'b' })
+    assert.equal(await lifecycle.clearQueue('отменено'), 2)
+    assert.equal(queue.claim({ owner: 'w1' }), undefined)
+    assert.equal(transitions.length, 2)
+  })
+})
+
+test('a crashed running lease is recovered without a new request after TTL', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 'a', requestKey: 'a' })
+    queue.claim({ owner: 'dead', ttlMs: 40 })
+    const lifecycle = createTaskLifecycle({ journal: { get: () => ({ status: 'done' }), recover: async () => [], pending: () => [], awaiting: () => [] }, queueStore: queue })
+    let runs = 0
+    await lifecycle.recover({ recordToJob: (record) => ({ id: record.id }), snapshot: async () => new Map(), workspaceDir: '/tmp' })
+    await lifecycle.drain({ runTask: async () => { runs += 1 } })
+    assert.equal(runs, 1, 'задача выполнена после истечения аренды без нового запроса')
+    assert.equal(queue.get('a').status, 'done')
   })
 })

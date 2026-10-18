@@ -71,9 +71,14 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
 
     /** Повтор/продолжение: requeue в журнале и постановка в очередь. */
     async retry({ taskId, job, reason, patch } = {}) {
+      if (queueStore) {
+        const result = queueStore.requeue({ taskId, payload: job, requestKey: job.requestKey, now: now() })
+        if (!result.ok) return { ok: false, ...result }
+      } else {
+        state.queue.push(job)
+      }
+      if (!state.queue.some((item) => item.id === job.id)) state.queue.push(job)
       if (journal) await journal.requeue(taskId, { reason, patch })
-      state.queue.push(job)
-      queueStore?.enqueue({ id: job.id, requestKey: job.requestKey, payload: job })
       return state.queue.length
     },
 
@@ -109,10 +114,11 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
 
     /** Снять задачи из очереди и пометить их отменёнными в журнале. */
     async clearQueue(reason) {
-      const queued = [...state.queue]
+      const queued = queueStore ? queueStore.listPending().filter((row) => row.status === 'queued') : [...state.queue]
+      queueStore?.cancelAll({ now: now() })
       state.queue = []
-      for (const job of queued) {
-        await this.transition(job.id, 'cancelled', { reason: 'cancelled', patch: { error: reason } }).catch(() => {})
+      for (const item of queued) {
+        await this.transition(item.id, 'cancelled', { reason: 'cancelled', patch: { error: reason } }).catch(() => {})
       }
       return queued.length
     },
@@ -124,44 +130,64 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
      * циклы идут параллельно, а повторный захват той же задачи невозможен.
      */
     async drain({ runTask, onError, isStopping = () => false, workers = 1, owner = `worker-${process.pid}`, leaseTtlMs = 60_000 } = {}) {
-      const count = Math.max(1, Number(workers) || 1)
-      const one = async (workerId) => {
-        while (!isStopping()) {
-          let job
-          let lease
-          if (queueStore) {
-            lease = queueStore.claim({ owner: workerId, ttlMs: leaseTtlMs, now: now() })
-            if (!lease) break
-            job = lease.payload
-            state.queue = state.queue.filter((item) => item.id !== lease.id)
-          } else {
-            if (state.queue.length === 0) break
-            job = state.queue.shift()
+      if (Number(workers) > 1) {
+        throw new Error('QUEUE_WORKERS>1 запрещён: workspace/runner/progress не изолированы на задачу')
+      }
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      const waitForLease = async () => {
+        const at = queueStore?.nextLeaseAt?.()
+        if (at === undefined) return false
+        const wait = Math.max(0, at - now() + 5)
+        await sleep(Math.min(wait, 1000))
+        return true
+      }
+      while (!isStopping()) {
+        let job
+        let lease
+        if (queueStore) {
+          lease = queueStore.claim({ owner, ttlMs: leaseTtlMs, now: now() })
+          if (!lease) {
+            if (await waitForLease()) continue
+            break
           }
-          const heartbeat = lease
-            ? setInterval(() => queueStore.heartbeat({ taskId: lease.id, generation: lease.generation, owner: workerId, ttlMs: leaseTtlMs, now: now() }), Math.max(1000, Math.floor(leaseTtlMs / 3)))
-            : undefined
-          heartbeat?.unref?.()
-          try {
-            await runTask(job)
-            if (lease) {
-              const status = journal?.get?.(lease.id)?.status
-              if (status === 'awaiting_owner' || status === 'queued') {
-                queueStore.setStatus({ taskId: lease.id, generation: lease.generation, status, now: now() })
-              } else {
-                queueStore.complete({ taskId: lease.id, generation: lease.generation, status: status ?? 'done', now: now() })
-              }
+          job = lease.payload
+          state.queue = state.queue.filter((item) => item.id !== lease.id)
+        } else {
+          if (state.queue.length === 0) break
+          job = state.queue.shift()
+        }
+        const leaseSignal = new AbortController()
+        const owns = () => !lease || queueStore.owns({ taskId: lease.id, generation: lease.generation, owner, now: now() })
+        const heartbeat = lease
+          ? setInterval(() => {
+            const renewed = queueStore.heartbeat({ taskId: lease.id, generation: lease.generation, owner, ttlMs: leaseTtlMs, now: now() })
+            if (!renewed) leaseSignal.abort()
+          }, Math.max(500, Math.floor(leaseTtlMs / 3)))
+          : undefined
+        heartbeat?.unref?.()
+        try {
+          await runTask(job, { leaseSignal: leaseSignal.signal, owns })
+          if (lease) {
+            if (!owns()) {
+              // Старая попытка потеряла аренду: не пишем терминал и не доставляем.
+              continue
             }
-          } catch (error) {
-            if (lease) queueStore.complete({ taskId: lease.id, generation: lease.generation, status: 'failed', now: now() })
-            if (onError) await onError(job, error)
-            else throw error
-          } finally {
-            clearInterval(heartbeat)
+            const status = journal?.get?.(lease.id)?.status
+            if (status === 'awaiting_owner' || status === 'queued') {
+              queueStore.setStatus({ taskId: lease.id, generation: lease.generation, owner, status, now: now() })
+            } else {
+              queueStore.complete({ taskId: lease.id, generation: lease.generation, owner, status: status ?? 'done', now: now() })
+            }
           }
+        } catch (error) {
+          if (lease && owns()) queueStore.complete({ taskId: lease.id, generation: lease.generation, owner, status: 'failed', now: now() })
+          if (onError) await onError(job, error)
+          else throw error
+        } finally {
+          clearInterval(heartbeat)
+          leaseSignal.abort()
         }
       }
-      await Promise.all(Array.from({ length: count }, (_, index) => one(`${owner}-${index + 1}`)))
     },
 
     /** Восстановить очередь и awaiting из журнала; interrupted не запускаются. */
@@ -174,6 +200,11 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
         queueStore.recoverExpired({ now: now() })
         for (const job of state.queue) {
           queueStore.enqueue({ id: job.id, requestKey: job.requestKey, payload: job })
+        }
+        // Задачи, пережившие падение в running, тоже должны попасть в память:
+        // drain сам дождётся истечения их аренды.
+        for (const row of queueStore.listPending()) {
+          if (!state.queue.some((job) => job.id === row.id)) state.queue.push(row.payload)
         }
       }
       if (journal) {

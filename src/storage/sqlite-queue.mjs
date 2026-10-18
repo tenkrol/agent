@@ -105,12 +105,13 @@ export class SqliteTaskQueue {
     }
   }
 
-  /** Продлить аренду только своей попытки. */
+  /** Продлить аренду только своей попытки и только пока она жива. */
   heartbeat({ taskId, generation, owner, ttlMs = 60_000, now = this.now() } = {}) {
     const result = this.db.prepare(`
       UPDATE tasks SET lease_until = ?, updated_at = ?
       WHERE id = ? AND generation = ? AND lease_owner = ? AND status = 'running'
-    `).run(now + ttlMs, now, taskId, generation, owner)
+        AND lease_until >= ?
+    `).run(now + ttlMs, now, taskId, generation, owner, now)
     if (result.changes > 0) {
       this.db.prepare('UPDATE attempts SET heartbeat_at = ? WHERE task_id = ? AND generation = ?')
         .run(now, taskId, generation)
@@ -119,13 +120,15 @@ export class SqliteTaskQueue {
   }
 
   /** Завершить попытку; устаревший generation отвергается. */
-  complete({ taskId, generation, status, payload, now = this.now() } = {}) {
+  complete({ taskId, generation, owner, status, payload, now = this.now() } = {}) {
     if (!TERMINAL.has(status)) throw new Error(`недопустимый терминальный статус: ${status}`)
+    // Fencing: только владелец живой аренды и только один раз.
     const result = this.db.prepare(`
       UPDATE tasks SET status = ?, payload = COALESCE(?, payload), lease_owner = NULL,
         lease_until = NULL, updated_at = ?
-      WHERE id = ? AND generation = ?
-    `).run(status, payload === undefined ? null : JSON.stringify(payload), now, taskId, generation)
+      WHERE id = ? AND generation = ? AND lease_owner = ? AND status = 'running'
+        AND lease_until >= ?
+    `).run(status, payload === undefined ? null : JSON.stringify(payload), now, taskId, generation, owner, now)
     if (result.changes === 0) return { ok: false, stale: true }
     this.db.prepare('UPDATE attempts SET status = ? WHERE task_id = ? AND generation = ?')
       .run(status, taskId, generation)
@@ -163,10 +166,70 @@ export class SqliteTaskQueue {
   }
 
   /** Сменить статус без терминального завершения (парковка вопроса/плана). */
-  setStatus({ taskId, generation, status, now = this.now() } = {}) {
-    const result = this.db.prepare('UPDATE tasks SET status = ?, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE id = ? AND generation = ?')
-      .run(status, now, taskId, generation)
+  setStatus({ taskId, generation, owner, status, now = this.now() } = {}) {
+    const result = this.db.prepare(`
+      UPDATE tasks SET status = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?
+      WHERE id = ? AND generation = ? AND lease_owner = ? AND status = 'running' AND lease_until >= ?
+    `).run(status, now, taskId, generation, owner, now)
     return result.changes > 0
+  }
+
+  /** Задача всё ещё принадлежит этой попытке? Проверка перед побочными эффектами. */
+  owns({ taskId, generation, owner, now = this.now() } = {}) {
+    return Boolean(this.db.prepare(`
+      SELECT 1 FROM tasks WHERE id = ? AND generation = ? AND lease_owner = ?
+        AND status = 'running' AND lease_until >= ?
+    `).get(taskId, generation, owner, now))
+  }
+
+  /** Вернуть задачу в queued с новым payload и новым generation. */
+  requeue({ taskId, payload, requestKey, now = this.now() } = {}) {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId)
+      if (!row) {
+        this.db.exec('ROLLBACK')
+        return { ok: false, missing: true }
+      }
+      if (row.status === 'running' && row.lease_until >= now) {
+        this.db.exec('ROLLBACK')
+        return { ok: false, busy: true }
+      }
+      const body = payload === undefined ? row.payload : JSON.stringify(payload)
+      if (row.status === 'queued' && body === row.payload && (requestKey === undefined || requestKey === row.request_key)) {
+        this.db.exec('COMMIT')
+        return { ok: true, duplicate: true, generation: Number(row.generation) }
+      }
+      const generation = Number(row.generation) + 1
+      this.db.prepare(`
+        UPDATE tasks SET status = 'queued', payload = ?, request_key = COALESCE(?, request_key),
+          lease_owner = NULL, lease_until = NULL, generation = ?, updated_at = ? WHERE id = ?
+      `).run(body, requestKey ?? null, generation, now, taskId)
+      this.db.prepare("UPDATE attempts SET status = 'requeued' WHERE task_id = ? AND status = 'running'").run(taskId)
+      this.db.prepare('INSERT INTO events (task_id, generation, type, at, data) VALUES (?, ?, ?, ?, ?)')
+        .run(taskId, generation, 'requeued', now, JSON.stringify({ requestKey }))
+      this.db.exec('COMMIT')
+      return { ok: true, duplicate: false, generation }
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Отменить все queued: после этого claim их не выдаст. */
+  cancelAll({ now = this.now() } = {}) {
+    return this.db.prepare("UPDATE tasks SET status = 'cancelled', lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE status = 'queued'").run(now).changes
+  }
+
+  /** Все незавершённые (queued/running) для восстановления без новых запросов. */
+  listPending() {
+    return this.db.prepare("SELECT * FROM tasks WHERE status IN ('queued', 'running') ORDER BY created_at ASC").all().map((row) => this.#row(row))
+  }
+
+  /** Ближайший конец аренды: сколько ждать до повторного claim. */
+  nextLeaseAt() {
+    const row = this.db.prepare("SELECT MIN(lease_until) AS at FROM tasks WHERE status = 'running' AND lease_until IS NOT NULL").get()
+    return row?.at ?? undefined
   }
 
   /** Сколько задач ожидает в очереди. */

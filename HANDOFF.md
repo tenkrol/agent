@@ -1111,3 +1111,25 @@ PLA-14: агентская часть (контракт v2, события, `ack
   Поэтому production оставлен на `QUEUE_WORKERS=1`; параллельность включать только
   после изоляции рабочей папки на задачу.
 - Открыто: per-task workspace для workers>1; PLA-20 не заархивирован.
+
+## 2026-10-18: PLA-23 — SQLite fencing и безопасный single-worker
+
+Ветка `fix-sqlite-fencing`, без merge/деплоя.
+
+- `requeue` в SQLite: транзакционно, с обновлением payload, новым generation,
+  инвалидацией старой попытки и идемпотентностью; awaiting/done больше не теряются.
+- `complete/setStatus/heartbeat` требуют owner + generation + status=running + живой
+  lease; повторный terminal и результат после recoverExpired отвергаются.
+- `clearQueue` отменяет queued и в SQLite (`cancelAll`), claim их больше не выдаёт.
+- `drain`: heartbeat-fail abort-ит leaseSignal; stale-попытка не пишет терминал;
+  runTask получает `{ leaseSignal, owns }`; AgentBot проверяет stale перед
+  завершением/доставкой.
+- Crash/restart до TTL: recover импортирует pending/running, drain ждёт истечения
+  аренды и выполняет задачу без нового запроса.
+- `QUEUE_WORKERS>1` отклоняется программно в конфиге/боте/lifecycle.
+- Тесты: **442 зелёных** (+7: requeue, cancelAll, stale complete, heartbeat, recovery
+  до TTL, workers rejection, сохранность SQLite после reopen).
+
+Фактическое production (без изменений этим change): release
+`release-20261017-230742`, `QUEUE_STORE=sqlite`, `QUEUE_WORKERS=1`, сервис active.
+Merge/деплой PLA-23 не выполнялись.
