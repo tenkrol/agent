@@ -152,9 +152,12 @@ export function loadConfig(env = process.env) {
       ],
     },
     agentProfiles: {
-      orchestrator: { provider: 'deepseek', model: String(read(env, 'ORCHESTRATOR_MODEL')).trim() || String(read(env, 'MODEL_NAME')).trim() },
-      dsh: { provider: 'deepseek', model: String(read(env, 'DSH_MODEL')).trim() || String(read(env, 'MODEL_NAME')).trim() },
-      quick: { provider: 'deepseek', model: String(read(env, 'ROUTER_MODEL')).trim() || String(read(env, 'MODEL_NAME')).trim() },
+      orchestrator: { provider: 'deepseek', model: String(read(env, 'ORCHESTRATOR_MODEL') ?? '').trim() || String(read(env, 'MODEL_NAME') ?? '').trim() },
+      dsh: { provider: 'deepseek', model: String(read(env, 'DSH_MODEL') ?? '').trim() || String(read(env, 'MODEL_NAME') ?? '').trim() },
+      quick: { provider: 'deepseek', model: String(read(env, 'ROUTER_MODEL') ?? '').trim() || String(read(env, 'MODEL_NAME') ?? '').trim() },
+      files: { provider: 'deepseek', model: String(read(env, 'FILES_MODEL') ?? '').trim() || String(read(env, 'MODEL_NAME') ?? '').trim(), profile: 'files' },
+      monitor: { provider: 'deepseek', model: String(read(env, 'MONITOR_MODEL') ?? '').trim() || String(read(env, 'MODEL_NAME') ?? '').trim(), profile: 'monitor' },
+      personal: { provider: 'deepseek', model: String(read(env, 'PERSONAL_MODEL') ?? '').trim() || String(read(env, 'MODEL_NAME') ?? '').trim(), profile: 'personal' },
     },
     vision: {
       enabled: boolean(read(env, 'VISION'), 'VISION'),
