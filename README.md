@@ -7,7 +7,7 @@ Telegram-агент, который живёт на отдельном серв�
 
 Движок исполнения — DSH в headless-режиме (модель DeepSeek), каждая задача идёт в
 изолированной cgroup с лимитами RAM/CPU/PIDs. Всё, что описано ниже, задеплоено и
-проверено живьём (286 тестов).
+проверено живьём (490 тестов).
 
 ## Что уже сделано (14 октября 2026)
 
@@ -28,7 +28,7 @@ Telegram-агент, который живёт на отдельном серв�
 | Память | долговечные факты о владельце (`/remember`, `/forget`) — **готово** |
 | Алерты (этап 1) | триггеры, дедуп, тихие часы, дневная сводка, `/stop` — **код в проде**, включится сам после этапа 0 |
 | Наблюдатель (этап 0) | 569 замеров за 2.0 суток, покрытие 97% — **идёт**, готовность базовой линии 19 октября |
-| Тесты | 288 (плюс живые проверки на сервере) — **зелёные** |
+| Тесты | 490 (плюс живые проверки на сервере) — **зелёные** |
 
 Итого: агент полностью делает повседневные задачи (файлы, документы, код, ответы), сам
 отчитывается о завершённых, следит за хостом и умеет включать алерты — ждём только
@@ -233,7 +233,7 @@ journalctl -u dsh-agent -f
 ## Тесты и разработка
 
 ```bash
-node --test test/*.test.mjs      # 286 тестов, фикстуры лежат в fixtures/
+node --test test/*.test.mjs      # 490 тестов, фикстуры лежат в fixtures/
 ```
 
 Правила, которые стоит помнить при правках: задача всегда идёт в cgroup с лимитами;
@@ -257,3 +257,77 @@ append-only, его нельзя компактить как журнал зад
   валидированным интерфейсом — решение не принято.
 - **Компакция DSH**: настройки профиля проверены A/B и эффекта не дают (в headless
   автосжатие не срабатывает), поэтому контекст ограничивается на стороне бота.
+
+
+## Заявки и доработки: как пользоваться
+
+С E3–E7 доработка проходит путь **заявка → компонентные спеки → реализация → проверки
+→ установка**. Всё, кроме установки, автоматизировано; установку запускает владелец/root.
+
+### 1. Создать заявку
+
+В чате бота (Испания):
+
+```
+/request добавь в бота команду показа релиза агента
+```
+
+Бот вернёт `requestId`, компоненты, вопрос (если формулировка неоднозначна) и ссылку.
+Или напрямую, с сервера агента:
+
+```sh
+TOKEN=$(grep '^BRIDGE_TOKEN=' /etc/agent/agent.env | cut -d= -f2-)
+curl -sS -X POST http://127.0.0.1:8787/v1/requests   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json'   -d '{"text":"Бот должен показывать релиз агента","title":"Версия агента"}'
+```
+
+Агент создаёт draft в `tenkrol/assistant-work`, определяет компоненты
+(`tenkrol/agent`/`tenkrol/assistant`), генерирует `proposal/design/tasks/acceptance`,
+выделяет `changeId` и публикует:
+
+- `req/<REQ>` — заявка и `manifest.json`;
+- `spec/<REQ>-<changeId>` — компонентные OpenSpec-ветки;
+- в manifest — `baseCommit` и `specificationCommit`.
+
+### 2. Реализовать
+
+```sh
+curl -sS -X POST http://127.0.0.1:8787/v1/implement   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json'   -d '{"requestId":"REQ-0009"}'
+```
+
+DSH работает в отдельном checkout компонента, затем:
+
+1. запускаются тесты и `spec-check`;
+2. при падении — repair с выводом ошибок (до 2 попыток);
+3. только после зелёных проверок пушится `impl/<REQ>-<changeId>`.
+
+### 3. Установить
+
+```sh
+curl -sS -X POST http://127.0.0.1:8787/v1/deploy   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json'   -d '{"requestId":"REQ-0009","confirm":"REQ-0009","component":"tenkrol/agent","branch":"impl/REQ-0009-PLA-32"}'
+```
+
+Нужно точное подтверждение (`confirm == requestId`). Сервис повторно проверяет ветку,
+делает merge в main и возвращает шаг установки. Установку выполняет владелец:
+
+```sh
+cd /tmp/agent-deploy/tenkrol-agent && sudo bash deploy/install-remote.sh
+```
+
+### 4. Наблюдение
+
+```sh
+curl -sS -H "authorization: Bearer $TOKEN" http://127.0.0.1:8787/v1/agents
+curl -sS -H "authorization: Bearer $TOKEN" "http://127.0.0.1:8787/v1/activity?limit=10"
+curl -sS -H "authorization: Bearer $TOKEN" http://127.0.0.1:8787/v1/usage
+```
+
+`/v1/agents` — реестр и профили моделей, `/v1/activity` — события задач,
+`/v1/usage` — расход. Пример ответа `/v1/requests` содержит `analysis.specs` и
+`analysis.attachments` с changeId/SHA.
+
+### Ограничения
+
+- PR через GitHub API не создаются: deploy key умеет clone/push; используйте compare URL
+  или добавьте fine-grained token/App.
+- Установка требует root: процесс агента работает под `agent` без sudo.
+- Параллельность — только с `WORKSPACE_PER_TASK=true`; иначе задачи делят workspace.
