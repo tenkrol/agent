@@ -1,0 +1,43 @@
+/**
+ * E4: создание заявки из сообщения и публикация ветки в spec-репозиторий.
+ */
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { createRequestDraft } from './requests.mjs'
+import { createGitHubClient } from '../execution/git.mjs'
+
+const nextId = async (repoDir) => {
+  const entries = await fs.readdir(path.join(repoDir, 'requests')).catch(() => [])
+  const numbers = entries.map((name) => /^REQ-(\d{4,})$/.exec(name)).filter(Boolean).map((match) => Number(match[1]))
+  return `REQ-${String((numbers.length ? Math.max(...numbers) : 0) + 1).padStart(4, '0')}`
+}
+
+export function createRequestService({ repo, repoDir, keyDir = '/etc/agent/github', logger, git = createGitHubClient({ keyDir, logger }) } = {}) {
+  return {
+    async create({ text, title } = {}) {
+      const clean = String(text ?? '').trim()
+      if (clean === '') throw new Error('пустой текст заявки')
+      const keyPath = path.join(keyDir, `${String(repo).split('/').pop()}_ed25519`)
+      await git.clone({ repo, dir: repoDir, branch: 'main', keyPath })
+      const requestId = await nextId(repoDir)
+      const requestTitle = String(title ?? clean.split('\n')[0]).slice(0, 120)
+      await createRequestDraft({
+        dir: path.join(repoDir, 'requests', requestId),
+        requestId,
+        title: requestTitle,
+        text: clean,
+        draft: true,
+      })
+      const branch = `req/${requestId}`
+      const result = await git.commitAndPush({
+        repo,
+        dir: repoDir,
+        branch,
+        message: `${requestId}: ${requestTitle}`,
+        keyPath,
+      })
+      logger?.info?.('request published', { requestId, branch, sha: result.sha })
+      return { requestId, branch, sha: result.sha, compareUrl: result.compareUrl }
+    },
+  }
+}

@@ -63,7 +63,8 @@ export function createGitHubClient({ keyDir = '/etc/agent/github', timeoutMs = G
         await fs.mkdir(path.dirname(target), { recursive: true })
         await fs.writeFile(target, content, 'utf8')
       }
-      await runGit(['add', '--', ...Object.keys(files)], { cwd: dir, keyPath: key, timeoutMs })
+      if (Object.keys(files).length > 0) await runGit(['add', '--', ...Object.keys(files)], { cwd: dir, keyPath: key, timeoutMs })
+      else await runGit(['add', '-A'], { cwd: dir, keyPath: key, timeoutMs })
       await runGit(['-c', 'user.name=tenkrol-agent', '-c', 'user.email=agent@tenkrol.local', 'commit', '-m', String(message)], { cwd: dir, keyPath: key, timeoutMs })
       await runGit(['push', '-u', 'origin', branch], { cwd: dir, keyPath: key, timeoutMs })
       const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })

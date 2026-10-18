@@ -34,6 +34,7 @@ import { inspectDocument, inspectSpreadsheet, recalcSpreadsheet, renderDocument 
 import { runCodeChecks } from './execution/checks.mjs'
 import { createModelClient } from './integrations/model.mjs'
 import { createVerifyPorts } from './verification/ports.mjs'
+import { createRequestService } from './workflow/request-service.mjs'
 import { ProceduresStore } from './storage/procedures.mjs'
 import { createProcedures } from './procedures/index.mjs'
 import { createSynthesizer } from './tools/tts.mjs'
@@ -194,6 +195,13 @@ async function main() {
     }),
   }
 
+  const requestService = createRequestService({
+    repo: config.spec.repo,
+    repoDir: config.spec.dir,
+    keyDir: config.spec.keyDir,
+    logger,
+  })
+
   /** @type {AgentBot} */
   let bot
   const cgroupLimiter = config.task.cgroup
@@ -352,6 +360,7 @@ async function main() {
       ],
       activity: (query) => bot.activity?.recent?.(query) ?? [],
       usage: () => bot.usageSnapshot?.() ?? {},
+      onCreateRequest: (body) => requestService.create(body),
       onSubmitV2: (request) => bot.submitV2Task(request),
       getTask: (id) => bot.taskState(id),
       onReply: (id, body) => bot.replyTask(id, body),

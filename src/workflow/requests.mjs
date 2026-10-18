@@ -8,7 +8,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { validateManifest } from '../../tools/request-manifest.mjs'
 
-export function requestTemplate({ requestId, title, text = '', components = [] } = {}) {
+export function requestTemplate({ requestId, title, text = '', components = [], draft = false } = {}) {
   const request = `# ${requestId}: ${title}\n\n${String(text ?? '').trim()}\n`
   return {
     'request.md': request,
@@ -19,6 +19,7 @@ export function requestTemplate({ requestId, title, text = '', components = [] }
       requestId,
       revision: 1,
       title,
+      ...(draft ? { draft: true } : {}),
       components,
       dependencies: [],
       executionPolicy: 'reviewed',
@@ -27,8 +28,8 @@ export function requestTemplate({ requestId, title, text = '', components = [] }
   }
 }
 
-export async function createRequestDraft({ dir, requestId, title, text = '', components = [] } = {}) {
-  const files = requestTemplate({ requestId, title, text, components })
+export async function createRequestDraft({ dir, requestId, title, text = '', components = [], draft = false } = {}) {
+  const files = requestTemplate({ requestId, title, text, components, draft })
   const manifest = JSON.parse(files['manifest.json'])
   const checked = validateManifest(manifest)
   if (!checked.ok) throw new Error(`manifest невалиден: ${checked.errors.join('; ')}`)
