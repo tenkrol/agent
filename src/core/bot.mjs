@@ -145,6 +145,15 @@ export class AgentBot {
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.dsh?.model ?? config.model?.name,
         }),
+        createDshExecutor({
+          id: 'files',
+          capabilities: ['files', 'documents', 'office'],
+          taskPrefix: 'Ты файловый агент: работаешь с документами, таблицами, презентациями, PDF и архивами. '
+            + 'Не углубляйся в код, если задача не про код. Результат — готовые файлы в outbox.\n\n',
+          runner: { run: (request) => this.runner.run(request) },
+          limits: config.limits ?? {},
+          modelProfile: config.agentProfiles?.files?.model ?? config.model?.name,
+        }),
         {
           id: 'quick',
           capabilities: ['quick'],
@@ -162,6 +171,9 @@ export class AgentBot {
           },
         },
       ],
+      selectExecutor: ({ task, executorId }) => executorId !== 'dsh'
+        ? executorId
+        : /(docx|xlsx|pptx|pdf|файл|документ|таблиц|презентац|архив|картин|изображен)/i.test(String(task ?? '')) ? 'files' : 'dsh',
       verifier,
       limits: {
         tokenLimit: config.limits.taskTokenBudget,

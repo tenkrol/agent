@@ -21,7 +21,7 @@ const failedFeedback = (verification) => (verification?.criteria ?? [])
  * @param {object} options - `executors`, `verifier`, `limits`, `logger`, `now`.
  * @returns {object} `run({ job, task, sessionId, signal, ... })`.
  */
-export function createOrchestrator({ executors = [], verifier, limits = {}, logger, verify: defaultVerify, now = () => Date.now() } = {}) {
+export function createOrchestrator({ executors = [], verifier, limits = {}, logger, verify: defaultVerify, now = () => Date.now(), selectExecutor } = {}) {
   const registry = createExecutorRegistry({ executors })
 
   async function run({
@@ -39,7 +39,8 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
     repairTask,
     attemptId,
   } = {}) {
-    const executor = registry.get(executorId)
+    const chosenId = (selectExecutor ? selectExecutor({ job, task, executorId }) : undefined) ?? executorId
+    const executor = registry.get(chosenId)
     const verify = runVerify ?? defaultVerify
     const procedureLimits = job.procedure?.limits ?? {}
     const tokenLimit = minLimit(limits.tokenLimit, procedureLimits.taskTokenBudget)
@@ -73,6 +74,7 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
         reason: 'cancelled',
         stages,
         startedAt,
+        executorId: chosenId,
       }
     }
 
@@ -103,7 +105,7 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
         workspaceDir,
       })
     } catch (error) {
-      logger?.warn?.('executor failed', { executor: executorId, error: error?.message ?? error })
+      logger?.warn?.('executor failed', { executor: chosenId, error: error?.message ?? error })
       result = { ok: false, aborted: parentAborted(), error: String(error?.message ?? error), usage: EMPTY_USAGE() }
       budget.consume(result.usage, { unknown: true })
     }
