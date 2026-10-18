@@ -42,3 +42,25 @@ test('commitAndPush writes a branch to a local remote', async () => {
     await fs.rm(dir, { recursive: true, force: true })
   }
 })
+
+test('commitAndPush tolerates a clean tree after DSH already committed', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'github-'))
+  try {
+    const remote = path.join(dir, 'remote.git')
+    git(dir, ['init', '--bare', remote])
+    const seed = path.join(dir, 'seed')
+    git(dir, ['clone', remote, 'seed'])
+    await fs.writeFile(path.join(seed, 'README.md'), '# seed')
+    git(seed, ['add', '.'])
+    git(seed, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'seed'])
+    git(seed, ['branch', '-M', 'main'])
+    git(seed, ['push', 'origin', 'main'])
+    const client = createGitHubClient({ keyDir: dir, logger: { info() {} } })
+    await fs.cp(seed, path.join(dir, 'work'), { recursive: true })
+    await client.commitAndPush({ repo: 'tenkrol/agent', dir: path.join(dir, 'work'), branch: 'task-2', files: { 'a.txt': 'x' }, message: 'one' })
+    const second = await client.commitAndPush({ repo: 'tenkrol/agent', dir: path.join(dir, 'work'), branch: 'task-2', files: {}, message: 'two' })
+    assert.match(second.sha, /[0-9a-f]{40}/)
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
