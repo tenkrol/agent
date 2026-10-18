@@ -2806,7 +2806,46 @@ export class AgentBot {
   /** Park a task that asked a question, and send the question. */
   async parkForAnswer({ job, result, reply, statusMessageId, outputs, leaseContext = {} }) {
     const sessionId = result.sessionId ?? job.sessionId
-    const parked = leaseContext.park?.({ payload: { question: reply.question, sessionId }, outbox: null })
+    const hours = Math.max(1, Math.round(this.config.dialogue.awaitReplyMs / 3600000))
+    const questionText = job.route
+      ? [
+        reply.answer === '' ? '' : reply.answer,
+        `❓ Вопрос по задаче ${job.id}:`,
+        reply.question,
+        '',
+        `_Ответьте через контракт: POST /v1/tasks/${job.id}/reply._`,
+      ].filter((part) => part !== '').join('\n')
+      : [
+        reply.answer === '' ? '' : reply.answer,
+        `❓ Вопрос по задаче ${job.id}:`,
+        reply.question,
+        '',
+        `_Ответьте сообщением. Отменить — /cancel. Ответ жду до ${hours} ч._`,
+      ].filter((part) => part !== '').join('\n')
+    const event = job.route
+      ? buildQuestionEvent({
+        task: { ...job, route: job.route },
+        text: questionText,
+        question: reply.question,
+        variants: [],
+        version: job.resultVersion ?? 1,
+        maxChars: this.config.delivery?.textChars ?? 3500,
+      })
+      : undefined
+    const outbox = job.route
+      ? { eventId: event.eventId, event }
+      : {
+        eventId: `question:${job.id}:${job.resultVersion ?? 1}`,
+        kind: 'personal',
+        taskId: job.id,
+        chatId: job.chatId,
+        text: questionText,
+        replyToMessageId: this.jobReplyTo(job),
+      }
+    const parked = leaseContext.park?.({
+      payload: { question: reply.question, sessionId },
+      outbox,
+    })
     if (parked && parked.ok === false && parked.unsupported !== true) return
     await this.lifecycle.awaitAnswer({
       taskId: job.id,
@@ -2825,35 +2864,13 @@ export class AgentBot {
       },
     })
     if (job.route) {
-      const questionText = [
-        reply.answer === '' ? '' : reply.answer,
-        `❓ Вопрос по задаче ${job.id}:`,
-        reply.question,
-        '',
-        `_Ответьте через контракт: POST /v1/tasks/${job.id}/reply._`,
-      ].filter((part) => part !== '').join('\n')
-      await this.delivery?.enqueue(buildQuestionEvent({
-        task: { ...job, route: job.route },
-        text: questionText,
-        question: reply.question,
-        variants: [],
-        version: job.resultVersion ?? 1,
-        maxChars: this.config.delivery?.textChars ?? 3500,
-      }))
+      await this.delivery?.enqueue(event)
       this.logger?.info('remote question queued', { taskId: job.id })
       return
     }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: `❓ Задача ${job.id}: жду ответа.` })
     // Files are sent before the question, so the question stays the last message.
     await this.sendOutputs({ job, outputs })
-    const hours = Math.max(1, Math.round(this.config.dialogue.awaitReplyMs / 3600000))
-    const questionText = [
-      reply.answer === '' ? '' : reply.answer,
-      `❓ Вопрос по задаче ${job.id}:`,
-      reply.question,
-      '',
-      `_Ответьте сообщением. Отменить — /cancel. Ответ жду до ${hours} ч._`,
-    ].filter((part) => part !== '').join('\n')
     await this.safeSend(job.chatId, questionText, { replyToMessageId: this.jobReplyTo(job) })
     await this.mirrorResult(questionText, job.id)
     this.logger?.info('task awaits an answer', { taskId: job.id, questionChars: reply.question.length })
