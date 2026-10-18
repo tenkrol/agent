@@ -2765,11 +2765,11 @@ export class AgentBot {
       : { kind: 'answer', answer: result.text ?? '', question: '', variants: [] }
 
     if (reply.kind === 'question') {
-      await this.parkForAnswer({ job, result, reply, statusMessageId, outputs })
+      await this.parkForAnswer({ job, result, reply, statusMessageId, outputs, leaseContext })
       return
     }
     if (reply.kind === 'variants') {
-      await this.parkForVariants({ job, result, reply, statusMessageId, outputs })
+      await this.parkForVariants({ job, result, reply, statusMessageId, outputs, leaseContext })
       return
     }
 
@@ -2804,8 +2804,10 @@ export class AgentBot {
   }
 
   /** Park a task that asked a question, and send the question. */
-  async parkForAnswer({ job, result, reply, statusMessageId, outputs }) {
+  async parkForAnswer({ job, result, reply, statusMessageId, outputs, leaseContext = {} }) {
     const sessionId = result.sessionId ?? job.sessionId
+    const parked = leaseContext.park?.({ payload: { question: reply.question, sessionId }, outbox: null })
+    if (parked && parked.ok === false && parked.unsupported !== true) return
     await this.lifecycle.awaitAnswer({
       taskId: job.id,
       chatId: job.chatId,
@@ -2858,8 +2860,10 @@ export class AgentBot {
   }
 
   /** Park a task that offered variants, and send them as buttons. */
-  async parkForVariants({ job, result, reply, statusMessageId, outputs }) {
+  async parkForVariants({ job, result, reply, statusMessageId, outputs, leaseContext = {} }) {
     const sessionId = result.sessionId ?? job.sessionId
+    const parked = leaseContext.park?.({ payload: { variants: reply.variants, question: reply.question || undefined, sessionId }, outbox: null })
+    if (parked && parked.ok === false && parked.unsupported !== true) return
     await this.lifecycle.awaitAnswer({
       taskId: job.id,
       chatId: job.chatId,
