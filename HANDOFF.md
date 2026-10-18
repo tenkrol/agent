@@ -1299,3 +1299,10 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - Причина прежних падений: каталог клона содержал root-owned файлы после ручных
   git-операций; `git clone fresh` не мог удалить. Исправлено `chown -R agent`.
 - Тесты: 490. README обновлён во всех трёх репозиториях.
+
+## 2026-10-18: PLA-35 / E8 закрыт
+
+- files executor: отдельный id/capabilities/taskPrefix/modelProfile, тот же DSH-runner;
+- selectExecutor: files для документов/файлов, иначе dsh; явный executorId не переопределяется;
+- live: XLSX-задача `192227-bkm` → done/passed;
+- release `release-20261018-192205`, active; тесты 493.

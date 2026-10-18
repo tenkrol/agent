@@ -114,3 +114,14 @@ modelProfile, tools и status; метаданные доступны для API/
 - GIVEN настроен профиль dsh
 - WHEN вызывается describe()
 - THEN profile виден в метаданных.
+
+## ADDED Requirements
+
+### Requirement: Выбор исполнителя по задаче
+Оркестратор ДОЛЖЕН выбирать исполнителя через `selectExecutor`; при отсутствии
+выбора используется dsh. Repair идёт тем же исполнителем.
+
+#### Scenario: Файловая задача
+- GIVEN зарегистрирован files
+- WHEN selectExecutor выбирает files
+- THEN execute и repair вызывают files.
