@@ -1426,6 +1426,34 @@ export class AgentBot {
     const status = outcome.status === STATUS.cancelled || outcome.status === STATUS.interrupted
       ? outcome.status
       : outcome.status
+    const quickText = String(quick.text ?? '').trim()
+    const routeEvent = job.route
+      ? buildResultEvent({
+        task: { ...job, route: job.route },
+        text: quickText,
+        files: [],
+        version: job.resultVersion ?? 1,
+        maxChars: this.config.delivery?.textChars ?? 3500,
+      })
+      : undefined
+    const personalOutbox = job.route
+      ? undefined
+      : {
+        eventId: `personal:${job.id}:${job.resultVersion ?? 1}`,
+        kind: 'personal',
+        taskId: job.id,
+        chatId: job.chatId,
+        text: quickText,
+        replyToMessageId: this.jobReplyTo(job),
+      }
+    const accepted = leaseContext.accept?.({
+      status,
+      payload: { summary: { text: quickText, files: [], version: job.resultVersion ?? 1 }, resultFiles: [] },
+      outbox: routeEvent ? { eventId: routeEvent.eventId, event: routeEvent } : personalOutbox,
+    })
+    if (accepted && accepted.ok === false && accepted.unsupported !== true) {
+      return { quick: true, cancelled: true, text: quickText }
+    }
     await this.lifecycle.finishTask(job.id, {
       status,
       reason: outcome.reason,
@@ -1446,16 +1474,9 @@ export class AgentBot {
       return { quick: true, cancelled: true, text: quick.text ?? '' }
     }
     if (job.route) {
-      const text = String(quick.text ?? '').trim()
-      await this.lifecycle.update(job.id, { resultSummary: { text, files: [], version: job.resultVersion ?? 1 } })
-      await this.delivery?.enqueue(buildResultEvent({
-        task: { ...job, route: job.route },
-        text,
-        files: [],
-        version: job.resultVersion ?? 1,
-        maxChars: this.config.delivery?.textChars ?? 3500,
-      }))
-      return { quick: true, text }
+      await this.lifecycle.update(job.id, { resultSummary: { text: quickText, files: [], version: job.resultVersion ?? 1 } })
+      await this.delivery?.enqueue(routeEvent)
+      return { quick: true, text: quickText }
     }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: quickStatus({ taskId: job.id }) })
     await this.safeSend(job.chatId, [
