@@ -132,7 +132,8 @@ test('an unattended task gets a plan without waiting for approval', async () => 
     const record = env.journal.recent(1)[0]
     assert.equal(record.status, 'done')
     assert.equal(record.plan, undefined, 'в журнал план не пишем: утверждать его некому')
-    assert.ok(env.usage.tokens(new Date(), 'Europe/Moscow') > 0, 'расход планировщика учтён')
+    // Тот же пояс, что у бота: иначе на границе суток запись и проверка расходятся.
+    assert.ok(env.usage.tokens(new Date(), env.config.runtime.timeZone) > 0, 'расход планировщика учтён')
   } finally {
     await env.close()
   }
