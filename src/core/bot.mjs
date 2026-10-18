@@ -77,7 +77,8 @@ const SWEEP_INTERVAL_MS = 10 * 60 * 1000
 /** Map the DSH usage shape onto the provider shape `usage.mjs` understands. */
 export function toProviderUsage(usage = {}) {
   return {
-    prompt_tokens: (Number(usage.inputTokens) || 0) + (Number(usage.cacheReadTokens) || 0) + (Number(usage.cacheWriteTokens) || 0),
+    // inputTokens уже включает кешированное чтение; повторно его не суммируем.
+    prompt_tokens: (Number(usage.inputTokens) || 0) + (Number(usage.cacheWriteTokens) || 0),
     completion_tokens: Number(usage.outputTokens) || 0,
     cached_tokens: Number(usage.cacheReadTokens) || 0,
   }
@@ -902,6 +903,17 @@ export class AgentBot {
   }
 
   /** Spend per day, in tokens and in money. */
+  /** Снимок расходов для API (E2). */
+  usageSnapshot() {
+    const timeZone = this.config.runtime.timeZone
+    const now = this.now()
+    return {
+      today: this.usage.tokens(now, timeZone),
+      total: this.usage.total(now, timeZone),
+      byUser: this.usage.byUser(now, timeZone),
+    }
+  }
+
   usageText(args = '') {
     const timeZone = this.config.runtime.timeZone
     const days = clamp(Number.parseInt(String(args).trim(), 10) || 7, 1, 60)

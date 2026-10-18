@@ -7,7 +7,7 @@ import { cleanup, tempDir } from './helpers.mjs'
 
 test('DSH usage is mapped onto the provider shape the store understands', () => {
   const mapped = toProviderUsage({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 30, cacheWriteTokens: 5 })
-  assert.deepEqual(mapped, { prompt_tokens: 135, completion_tokens: 20, cached_tokens: 30 })
+  assert.deepEqual(mapped, { prompt_tokens: 105, completion_tokens: 20, cached_tokens: 30 })
 })
 
 test('recording sums tokens per day and flags the budget', async () => {

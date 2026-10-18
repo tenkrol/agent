@@ -351,6 +351,7 @@ async function main() {
         ...(bot.orchestrator?.registry?.describe?.() ?? []),
       ],
       activity: (query) => bot.activity?.recent?.(query) ?? [],
+      usage: () => bot.usageSnapshot?.() ?? {},
       onSubmitV2: (request) => bot.submitV2Task(request),
       getTask: (id) => bot.taskState(id),
       onReply: (id, body) => bot.replyTask(id, body),

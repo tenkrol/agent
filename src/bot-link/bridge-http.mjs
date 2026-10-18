@@ -99,6 +99,7 @@ export class BridgeServer {
     onReply,
     onCancel,
     agents,
+    usage,
     activity,
     files,
     routeConfig = {},
@@ -117,6 +118,7 @@ export class BridgeServer {
     this.onReply = onReply
     this.onCancel = onCancel
     this.agents = agents
+    this.usage = usage
     this.activity = activity
     this.files = files
     this.routeConfig = routeConfig
@@ -177,7 +179,7 @@ export class BridgeServer {
 
     const known = pathname === '/bridge' || pathname === '/v1/files' || pathname.startsWith('/v1/files/')
       || pathname === '/v1/tasks' || pathname.startsWith('/v1/tasks/') || pathname === '/v1/capabilities'
-      || pathname === '/v1/agents' || pathname === '/v1/activity'
+      || pathname === '/v1/agents' || pathname === '/v1/activity' || pathname === '/v1/usage'
     if (!known) {
       send(404, { ok: false, error: 'not found' })
       return
@@ -208,6 +210,10 @@ export class BridgeServer {
       }
       if (request.method === 'GET' && pathname === '/v1/agents') {
         send(200, { ok: true, contract: 2, agents: await this.agents?.() ?? [] })
+        return
+      }
+      if (request.method === 'GET' && pathname === '/v1/usage') {
+        send(200, { ok: true, contract: 2, usage: await this.usage?.() ?? {} })
         return
       }
       if (request.method === 'GET' && pathname === '/v1/activity') {
