@@ -2973,6 +2973,10 @@ export class AgentBot {
     }
     const safeText = redactSecrets(text)
     if (safeText !== text) this.logger?.warn('secret redacted from report', { taskId: job.id })
+    // Личный путь тоже фиксирует принятие до отправки; outbox для него пока не
+    // создаётся отдельно — доставка идёт напрямую, ограничение зафиксировано.
+    const personalAccepted = leaseContext.accept?.({ status: status ?? 'done', payload: { summary: { text: safeText, files: [] }, resultFiles: [] }, outbox: null })
+    if (personalAccepted && personalAccepted.ok === false && personalAccepted.unsupported !== true) return
     await this.markStatus({
       chatId: job.chatId,
       statusMessageId,
