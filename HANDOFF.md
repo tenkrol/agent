@@ -1274,3 +1274,10 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - DSH-коммит и пустой commitAndPush больше не роняют поток; 485 тестов.
 - PR не создаётся через API: compare URL, нужен token/App.
 - release `release-20261018-183455`, active.
+
+## 2026-10-18: PLA-33 / E6 закрыт
+
+- после DSH: runCodeChecks (тесты + spec-check), до 2 repair-попыток с выводом ошибок;
+- красная ветка impl не пушится;
+- live-проверка `impl/REQ-0009-PLA-32`: spec-check ok, node --test 483 pass;
+- release `release-20261018-183737`, active; тесты 486.
