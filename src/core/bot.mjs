@@ -163,6 +163,7 @@ export class AgentBot {
           runner: { run: (request) => this.runner.run(request) },
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.files?.model ?? config.model?.name,
+          profileStatus: 'unsupported',
         }),
         createDshExecutor({
           id: 'monitor',
@@ -173,6 +174,7 @@ export class AgentBot {
           runner: { run: (request) => this.runner.run(request) },
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.monitor?.model ?? config.model?.name,
+          profileStatus: 'unsupported',
         }),
         createDshExecutor({
           id: 'personal',
@@ -183,6 +185,7 @@ export class AgentBot {
           runner: { run: (request) => this.runner.run(request) },
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.personal?.model ?? config.model?.name,
+          profileStatus: 'unsupported',
         }),
         {
           id: 'quick',
@@ -2707,7 +2710,7 @@ export class AgentBot {
           if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage, info) => {
-          this.activity?.record?.({ type: 'model_usage', taskId: job.id, agent: 'dsh', stage: info?.stage, tokens: usage?.totalTokens, unknown: Boolean(info?.unknown || usage?.totalTokens === undefined) })
+          this.activity?.record?.({ type: 'model_usage', taskId: job.id, agent: 'dsh', role: job.agentRole ?? 'dsh', provider: 'deepseek', model: this.config.model?.name, stage: info?.stage, tokens: usage?.totalTokens, unknown: Boolean(info?.unknown || usage?.totalTokens === undefined) })
           if (info?.unknown || usage?.totalTokens === undefined) usageUnknown = true
           addUsage(usage)
           if ((usage?.totalTokens ?? 0) > 0 || (usage?.steps ?? 0) > 0) {

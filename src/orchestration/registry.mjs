@@ -20,6 +20,7 @@ export function createExecutorRegistry({ executors = [] } = {}) {
         capabilities: [...(executor.capabilities ?? [])],
         limits: { ...(executor.limits ?? {}) },
         modelProfile: executor.modelProfile,
+        profileStatus: executor.profileStatus ?? (executor.modelProfile ? 'unsupported' : undefined),
         tools: [...(executor.tools ?? [])],
         status: executor.status ?? 'ready',
       }))

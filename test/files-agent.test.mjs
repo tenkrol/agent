@@ -42,3 +42,10 @@ test('chooseExecutorId routes host tasks to monitor, files to files, explicit id
   assert.equal(chooseExecutorId({ task: 'сделай xlsx' }), 'files')
   assert.equal(chooseExecutorId({ task: 'сделай xlsx', executorId: 'quick' }), 'quick')
 })
+
+
+test('file/monitor/personal profiles are reported as unsupported, not active switches', () => {
+  const executor = createDshExecutor({ id: 'files', modelProfile: 'files-model', runner: { async run() { return {} } } })
+  assert.equal(executor.profileStatus, 'unsupported')
+  assert.equal(executor.modelProfile, 'files-model')
+})
