@@ -38,6 +38,7 @@ import { createRequestService } from './workflow/request-service.mjs'
 import { createComponentSpecService } from './workflow/component-specs.mjs'
 import { createImplementService } from './workflow/implement.mjs'
 import { createRequestPoller } from './workflow/request-poller.mjs'
+import { createSpecifyService } from './workflow/specify.mjs'
 import { createDeployService } from './workflow/deploy.mjs'
 import { createGitHubClient } from './execution/git.mjs'
 import { ProceduresStore } from './storage/procedures.mjs'
@@ -248,6 +249,17 @@ async function main() {
     logger,
   })
 
+  const specifyService = createSpecifyService({
+    components: config.spec.components,
+    git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
+    runner,
+    baseDir: config.spec.implementDir,
+    loadRequest: (input) => implementService.loadRequest(input),
+    runChecks: runCodeChecks,
+    timeoutMs: config.task.timeoutMs,
+    logger,
+  })
+
   const deployService = createDeployService({
     components: config.spec.components,
     git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
@@ -407,6 +419,12 @@ async function main() {
       onCreateRequest: (body) => requestService.create(body),
       onPoll: () => requestPoller.scan(),
       pollStatus: () => requestPoller.status(),
+      onSpecify: (body) => specifyService.specify({
+        requestId: String(body.requestId),
+        specRepo: config.spec.repo,
+        specDir: config.spec.dir,
+        keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
+      }),
       onApprove: (body) => requestService.approve({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,

@@ -125,6 +125,7 @@ test('approve writes identity/revision/exact component SHA', async () => {
     await fs.mkdir(dir, { recursive: true })
     const components = [{ repository: 'tenkrol/agent', changeId: 'PLA-99', baseCommit: 'a'.repeat(40), specificationCommit: 'b'.repeat(40) }]
     await fs.writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ requestId: 'REQ-0009', revision: 3, components }))
+    await fs.writeFile(path.join(dir, 'status.json'), JSON.stringify({ requestId: 'REQ-0009', revision: 3, state: 'ready' }))
     const service = createRequestService({
       repo: 'tenkrol/assistant-work',
       repoDir: specDir,
@@ -161,5 +162,21 @@ test('POST /v1/approve validates requestId and calls the service', async () => {
     assert.equal(seen, 'REQ-0009')
   } finally {
     await server.stop()
+  }
+})
+
+
+test('approve refuses a draft before specify', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'req-approve-draft-'))
+  try {
+    const specDir = path.join(root, 'spec')
+    const dir = path.join(specDir, 'requests', 'REQ-0010')
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ requestId: 'REQ-0010', revision: 1, components: [{ repository: 'tenkrol/agent', changeId: 'PLA-1', baseCommit: 'a'.repeat(40), specificationCommit: 'b'.repeat(40) }] }))
+    await fs.writeFile(path.join(dir, 'status.json'), JSON.stringify({ requestId: 'REQ-0010', revision: 1, state: 'draft' }))
+    const service = createRequestService({ repo: 'x', repoDir: specDir, keyDir: root, git: { async clone() {}, async commitAndPush() {} } })
+    await assert.rejects(() => service.approve({ requestId: 'REQ-0010', specRepo: 'x', specDir, keyPath: '/k' }), /specify/)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
   }
 })

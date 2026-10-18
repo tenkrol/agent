@@ -24,6 +24,8 @@ export function createRequestService({ repo, repoDir, keyDir = '/etc/agent/githu
       await git.clone({ repo: specRepo, dir: specDir, branch: `req/${requestId}`, keyPath, fresh: true })
       const dir = path.join(specDir, 'requests', requestId)
       const manifest = JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8'))
+      const status = await fs.readFile(path.join(dir, 'status.json'), 'utf8').then((raw) => JSON.parse(raw)).catch(() => undefined)
+      if (status?.state !== 'ready') throw new Error(`согласование возможно только после specify (состояние ${status?.state ?? 'draft'})`)
       if (!Array.isArray(manifest.components) || manifest.components.length === 0) throw new Error('components пуст: согласовать нечего')
       const approval = {
         requestId,
