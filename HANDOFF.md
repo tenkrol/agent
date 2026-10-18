@@ -1219,3 +1219,20 @@ Merge/деплой PLA-23 не выполнялись.
   затем `String(undefined)` давал путь `undefined`; сейчас config defaults корректны.
 - `agentProfiles` и `config.spec` добавлены в loadConfig.
 - E3: repo/keys/requests работают; PR через API всё ещё требует token/App.
+
+## 2026-10-18: финальный статус сессии (E0–E4 частично)
+
+Production: агент `release-20261018-085724` (SQLite, workers=2, per-task workspace),
+бот `release-20261018-090029`; сервисы active.
+
+- E0 (PLA-24), E1 (PLA-25), E2 (PLA-26/PLB-015) — закрыты, установлены.
+- E3 (PLA-27): repo/keys/manifest/ветки работают; `REQ-0001`, `REQ-0002`, `REQ-0003`
+  опубликованы; PR через API не создаются — нужен token/App или ручное открытие по
+  compare-ссылкам.
+- E4 (PLA-29/PLB-017): draft-заявка из API и команда `/request` работают live;
+  не хватает LLM-анализа компонентов/changeId, policy-режима и привязки к OpenSpec.
+- E5–E11 не начинались.
+
+Незакрытые ветки (не мержить без проверки/PR): `e3-github-spec-process`,
+`e3-req-0002-agent`, `e3-req-0002-assistant`, `e4-request-draft`, `e4-request-command`
+(частично влиты в main/app-translation).
