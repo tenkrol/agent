@@ -159,6 +159,20 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
         const leaseSignal = new AbortController()
         let accepted = false
         const owns = () => !lease || queueStore.owns({ taskId: lease.id, generation: lease.generation, owner, now: now() })
+        let parked = false
+        const park = (data = {}) => {
+          if (!lease || !queueStore) return { ok: false, unsupported: true }
+          const result = queueStore.park({
+            taskId: lease.id,
+            generation: lease.generation,
+            owner,
+            payload: data.payload,
+            outbox: data.outbox,
+            now: now(),
+          })
+          if (result.ok) parked = true
+          return result
+        }
         const accept = (data = {}) => {
           if (!lease || !queueStore) return { ok: false, unsupported: true }
           const result = queueStore.accept({
@@ -181,9 +195,9 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
           : undefined
         heartbeat?.unref?.()
         try {
-          await runTask(job, { leaseSignal: leaseSignal.signal, owns, ...(queueStore && lease ? { accept } : {}) })
+          await runTask(job, { leaseSignal: leaseSignal.signal, owns, ...(queueStore && lease ? { accept, park } : {}) })
           if (lease) {
-            if (accepted) continue
+            if (accepted || parked) continue
             if (!owns()) {
               // Старая попытка потеряла аренду: не пишем терминал и не доставляем.
               continue

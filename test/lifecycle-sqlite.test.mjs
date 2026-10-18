@@ -158,3 +158,19 @@ test('accept boundary marks the lease task done and stores outbox before deliver
     assert.equal(queue.pendingOutbox().length, 1)
   })
 })
+
+test('park atomically moves a task to awaiting_owner before the question is sent', async () => {
+  await withQueue(async (queue) => {
+    const journal = { get: () => ({ status: 'awaiting_owner' }) }
+    const lifecycle = createTaskLifecycle({ journal, queueStore: queue })
+    lifecycle.enqueue({ id: 'a', requestKey: 'a', payload: { id: 'a' } })
+    await lifecycle.drain({
+      runTask: async (job, context) => {
+        const result = context.park({ payload: { question: 'формат?' }, outbox: null })
+        assert.equal(result.ok, true)
+      },
+    })
+    assert.equal(queue.get('a').status, 'awaiting_owner')
+    assert.equal(queue.claim({ owner: 'w2' }), undefined)
+  })
+})

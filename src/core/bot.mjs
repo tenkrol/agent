@@ -1260,7 +1260,7 @@ export class AgentBot {
    *
    * @returns {Promise<object|undefined>} a marker when the task is parked, undefined to just run it.
    */
-  async parkForPlan({ job, statusMessageId, controller, budget }) {
+  async parkForPlan({ job, statusMessageId, controller, budget, leaseContext = {} }) {
     if (!this.shouldPlan(job)) return undefined
     if (controller?.signal.aborted) {
       await this.lifecycle.finishTask(job.id, { status: STATUS.cancelled, reason: 'cancelled' })
@@ -1294,6 +1294,8 @@ export class AgentBot {
       return undefined
     }
 
+    const parked = leaseContext.park?.({ payload: { plan: drafted.plan.slice(0, 2000) }, outbox: null })
+    if (parked && parked.ok === false && parked.unsupported !== true) return { cancelled: true }
     await this.lifecycle.awaitAnswer({
       taskId: job.id,
       chatId: job.chatId,
@@ -2523,7 +2525,7 @@ export class AgentBot {
     if (quick && !quick.fallback) return quick
 
     // Big work gets a plan first: cheaper than a run that went the wrong way.
-    const planned = remote ? undefined : await this.parkForPlan({ job, statusMessageId, controller: attemptController, budget: attemptBudget })
+    const planned = remote ? undefined : await this.parkForPlan({ job, statusMessageId, controller: attemptController, budget: attemptBudget, leaseContext })
     if (planned) return planned
 
     // Существенная неоднозначность формата: один вопрос до выполнения.

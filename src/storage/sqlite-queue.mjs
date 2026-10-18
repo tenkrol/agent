@@ -261,6 +261,35 @@ export class SqliteTaskQueue {
     }
   }
 
+  /**
+   * Атомарно припарковать задачу (вопрос/план): статус awaiting_owner, payload и
+   * outbox в одной транзакции, аренда снимается; дальнейшая доставка читает outbox.
+   */
+  park({ taskId, generation, owner, payload, outbox, now = this.now() } = {}) {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = this.db.prepare(`
+        UPDATE tasks SET status = 'awaiting_owner', payload = COALESCE(?, payload),
+          lease_owner = NULL, lease_until = NULL, updated_at = ?
+        WHERE id = ? AND generation = ? AND lease_owner = ? AND status = 'running' AND lease_until >= ?
+      `).run(payload === undefined ? null : JSON.stringify(payload), now, taskId, generation, owner, now)
+      if (result.changes === 0) {
+        this.db.exec('ROLLBACK')
+        return { ok: false, stale: true }
+      }
+      if (outbox) {
+        this.db.prepare(`INSERT OR REPLACE INTO outbox (event_id, task_id, payload, status, created_at) VALUES (?, ?, ?, 'pending', ?)`)
+          .run(outbox.eventId, taskId, JSON.stringify(outbox), now)
+      }
+      this.db.prepare("UPDATE attempts SET status = 'awaiting_owner' WHERE task_id = ? AND generation = ?").run(taskId, generation)
+      this.db.exec('COMMIT')
+      return { ok: true, stale: false }
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   /** Принятые, но ещё не поставленные в доставку события. */
   pendingOutbox({ limit = 50 } = {}) {
     return this.db.prepare("SELECT * FROM outbox WHERE status = 'pending' ORDER BY created_at LIMIT ?").all(limit)
