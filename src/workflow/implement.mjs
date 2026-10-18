@@ -6,6 +6,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { runCodeChecks } from '../execution/checks.mjs'
+import { REQUEST_STATES, validateImplementable } from './request-state.mjs'
 
 const promptFor = ({ requestId, changeId, text, branch }) => `Ты реализуешь заявку ${requestId}
 в компоненте ${changeId} на ветке ${branch}.
@@ -28,18 +29,41 @@ export function createImplementService({ components = [], git, runner, baseDir, 
       await git.clone({ repo: specRepo, dir: specDir, branch: `req/${requestId}`, keyPath, fresh: true })
       const manifest = JSON.parse(await fs.readFile(path.join(specDir, 'requests', requestId, 'manifest.json'), 'utf8'))
       const text = await fs.readFile(path.join(specDir, 'requests', requestId, 'request.md'), 'utf8').catch(() => manifest.title ?? '')
-      return { requestId, manifest, text }
+      const approval = await fs.readFile(path.join(specDir, 'requests', requestId, 'approval.json'), 'utf8').then((raw) => JSON.parse(raw)).catch(() => undefined)
+      const status = await fs.readFile(path.join(specDir, 'requests', requestId, 'status.json'), 'utf8').then((raw) => JSON.parse(raw)).catch(() => undefined)
+      return { requestId, manifest, text, approval, status }
+    },
+
+    /** Записать состояние заявки в её ветку. */
+    async saveStatus({ requestId, specRepo, specDir, keyPath, state, extra = {} }) {
+      const file = path.join(specDir, 'requests', requestId, 'status.json')
+      const status = { requestId, state, updatedAt: new Date().toISOString(), ...extra }
+      await fs.writeFile(file, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
+      await git.commitAndPush({
+        repo: specRepo,
+        dir: specDir,
+        branch: `req/${requestId}`,
+        message: `${requestId}: ${state}`,
+        keyPath,
+      })
+      return status
     },
 
     /** Реализовать все компоненты заявки; ошибка одного останавливает поток. */
-    async implement({ requestId, specRepo, specDir, keyPath, signal }) {
+    async implement({ requestId, specRepo, specDir, keyPath, signal, retry = false }) {
       const loaded = await this.loadRequest({ requestId, specRepo, specDir, keyPath })
+      const check = validateImplementable({ manifest: loaded.manifest, approval: loaded.approval, status: loaded.status, retry })
+      if (!check.ok) throw new Error(`заявка не готова к реализации: ${check.errors.join('; ')}`)
+      await this.saveStatus({ requestId, specRepo, specDir, keyPath, state: REQUEST_STATES.running, extra: { revision: loaded.manifest.revision } })
       const results = []
+      try {
       for (const component of loaded.manifest.components ?? []) {
         const target = components.find((item) => item.repository === component.repository)
         if (!target) throw new Error(`нет настроенного компонента ${component.repository}`)
         const dir = path.join(baseDir, requestId, component.repository.split('/').pop())
         await git.clone({ repo: component.repository, dir, branch: component.branch ?? 'main', keyPath: target.keyPath, fresh: true })
+        if (!component.specificationCommit) throw new Error(`нет specificationCommit для ${component.changeId}`)
+        await git.checkoutCommit({ repo: component.repository, dir, sha: component.specificationCommit, keyPath: target.keyPath })
         const branch = `impl/${requestId}-${component.changeId}`
         const result = await runner.run({
           task: promptFor({ requestId, changeId: component.changeId, text: loaded.text, branch: component.branch }),
@@ -89,7 +113,19 @@ export function createImplementService({ components = [], git, runner, baseDir, 
         })
         logger?.info?.('request implemented', { requestId, changeId: component.changeId, branch })
       }
-      return { requestId, results }
+      } catch (error) {
+        await this.saveStatus({ requestId, specRepo, specDir, keyPath, state: REQUEST_STATES.failed, extra: { error: String(error?.message ?? error).slice(0, 300) } }).catch(() => {})
+        throw error
+      }
+      await this.saveStatus({
+        requestId,
+        specRepo,
+        specDir,
+        keyPath,
+        state: REQUEST_STATES.verified,
+        extra: { revision: loaded.manifest.revision, results },
+      })
+      return { requestId, results, state: REQUEST_STATES.verified }
     },
   }
 }

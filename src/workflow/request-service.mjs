@@ -19,6 +19,37 @@ const nextId = async (repoDir) => {
 
 export function createRequestService({ repo, repoDir, keyDir = '/etc/agent/github', logger, git = createGitHubClient({ keyDir, logger }), analyze = analyzeRequest, attachComponents } = {}) {
   return {
+    /** F2: согласование конкретной ревизии и точных SHA компонентных спек. */
+    async approve({ requestId, specRepo, specDir, keyPath, approvedBy = 'owner' } = {}) {
+      await git.clone({ repo: specRepo, dir: specDir, branch: `req/${requestId}`, keyPath, fresh: true })
+      const dir = path.join(specDir, 'requests', requestId)
+      const manifest = JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8'))
+      if (!Array.isArray(manifest.components) || manifest.components.length === 0) throw new Error('components пуст: согласовать нечего')
+      const approval = {
+        requestId,
+        revision: manifest.revision,
+        approvedBy,
+        approvedAt: new Date().toISOString(),
+        components: manifest.components.map((component) => ({
+          repository: component.repository,
+          changeId: component.changeId,
+          baseCommit: component.baseCommit,
+          specificationCommit: component.specificationCommit,
+        })),
+      }
+      await fs.writeFile(path.join(dir, 'approval.json'), `${JSON.stringify(approval, null, 2)}\n`, 'utf8')
+      await fs.writeFile(path.join(dir, 'status.json'), `${JSON.stringify({ requestId, revision: manifest.revision, state: 'approved', updatedAt: approval.approvedAt }, null, 2)}\n`, 'utf8')
+      const result = await git.commitAndPush({
+        repo: specRepo,
+        dir: specDir,
+        branch: `req/${requestId}`,
+        message: `${requestId}: approved r${manifest.revision}`,
+        keyPath,
+      })
+      logger?.info?.('request approved', { requestId, revision: manifest.revision, sha: result.sha })
+      return { requestId, approval, sha: result.sha, compareUrl: result.compareUrl }
+    },
+
     async create({ text, title } = {}) {
       const clean = String(text ?? '').trim()
       if (clean === '') throw new Error('пустой текст заявки')

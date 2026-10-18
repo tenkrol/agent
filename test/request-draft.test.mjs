@@ -116,3 +116,50 @@ test('request service attaches component specs and updates manifest', async () =
     await fs.rm(root, { recursive: true, force: true })
   }
 })
+
+test('approve writes identity/revision/exact component SHA', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'req-approve-'))
+  try {
+    const specDir = path.join(root, 'spec')
+    const dir = path.join(specDir, 'requests', 'REQ-0009')
+    await fs.mkdir(dir, { recursive: true })
+    const components = [{ repository: 'tenkrol/agent', changeId: 'PLA-99', baseCommit: 'a'.repeat(40), specificationCommit: 'b'.repeat(40) }]
+    await fs.writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ requestId: 'REQ-0009', revision: 3, components }))
+    const service = createRequestService({
+      repo: 'tenkrol/assistant-work',
+      repoDir: specDir,
+      keyDir: root,
+      logger: { info() {} },
+      git: { async clone() { return { sha: 'a'.repeat(40) } }, async commitAndPush() { return { sha: 'c'.repeat(40) } } },
+    })
+    const result = await service.approve({ requestId: 'REQ-0009', specRepo: 'x', specDir, keyPath: '/tmp/key' })
+    assert.equal(result.approval.revision, 3)
+    assert.equal(result.approval.approvedBy, 'owner')
+    assert.equal(result.approval.components[0].specificationCommit, 'b'.repeat(40))
+    const written = JSON.parse(await fs.readFile(path.join(dir, 'approval.json'), 'utf8'))
+    assert.equal(written.revision, 3)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('POST /v1/approve validates requestId and calls the service', async () => {
+  const { createBridgeServer } = await import('../src/bot-link/bridge-http.mjs')
+  const { createTestLogger } = await import('./helpers.mjs')
+  let seen
+  const server = createBridgeServer({
+    token: 'secret', port: 0, logger: createTestLogger(), onSubmit: async () => ({ taskId: 't' }),
+    onApprove: async ({ requestId }) => { seen = requestId; return { approval: { requestId } } },
+  })
+  const address = await server.start()
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/approve`, {
+      method: 'POST', headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: 'REQ-0009' }),
+    })
+    assert.equal(response.status, 202)
+    assert.equal(seen, 'REQ-0009')
+  } finally {
+    await server.stop()
+  }
+})

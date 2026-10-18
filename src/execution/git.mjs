@@ -78,6 +78,41 @@ export function createGitHubClient({ keyDir = '/etc/agent/github', timeoutMs = G
       return { sha: stdout, compareUrl: `https://github.com/${repo}/compare/main...${branch}` }
     },
 
+    /** Текущий HEAD рабочей копии. */
+    async head({ dir } = {}) {
+      const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })
+      return stdout
+    },
+
+    /** Перейти на конкретный commit (ревизия спецификации, не верхушка ветки). */
+    async checkoutCommit({ repo, dir, sha, keyPath } = {}) {
+      const key = keyPath ?? keyFor(repo)
+      if (!/^[0-9a-f]{40}$/i.test(String(sha))) throw new Error('нужен полный commit SHA')
+      await runGit(['fetch', 'origin', sha], { cwd: dir, keyPath: key, timeoutMs })
+      await runGit(['checkout', '--detach', sha], { cwd: dir, keyPath: key, timeoutMs })
+      const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })
+      if (stdout !== sha) throw new Error(`checkout не совпал с согласованным SHA: ${stdout} != ${sha}`)
+      return stdout
+    },
+
+    /** Влить конкретный commit в текущую ветку без push (для проверки результата). */
+    async mergeSha({ repo, dir, sha, message, keyPath } = {}) {
+      const key = keyPath ?? keyFor(repo)
+      if (!/^[0-9a-f]{40}$/i.test(String(sha))) throw new Error('нужен полный commit SHA')
+      await runGit(['fetch', 'origin', sha], { cwd: dir, keyPath: key, timeoutMs })
+      await runGit(['-c', 'user.name=tenkrol-agent', '-c', 'user.email=agent@tenkrol.local', 'merge', '--no-ff', sha, '-m', String(message ?? `integration ${sha}`)], { cwd: dir, keyPath: key, timeoutMs })
+      const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })
+      return stdout
+    },
+
+    /** Запушить текущую ветку (после проверок). */
+    async push({ repo, dir, target = 'main', keyPath } = {}) {
+      const key = keyPath ?? keyFor(repo)
+      await runGit(['push', 'origin', `${target}`], { cwd: dir, keyPath: key, timeoutMs })
+      const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })
+      return stdout
+    },
+
     /** Слить ветку в target (обычно main) и запушить. */
     async mergeAndPush({ repo, dir, branch, target = 'main', message, keyPath } = {}) {
       const key = keyPath ?? keyFor(repo)

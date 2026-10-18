@@ -1,30 +1,74 @@
 /**
- * E7: установка проверенной реализации после подтверждения владельца.
+ * F3: выпуск только проверенного результата интеграции.
  *
- * Ничего не устанавливает сам: установщик компонента приходит портом `install`.
+ * Идентификатор проверенного кода — commit SHA, а не имя ветки. Merge выполняется
+ * с актуальным main; проверки запускаются на результате слияния; публикация — после
+ * зелёных проверок. Установка — отдельное состояние, не «успех merge».
  */
-export function createDeployService({ components = [], git, checks, install, logger } = {}) {
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { runCodeChecks } from '../execution/checks.mjs'
+import { approvalProblems, manifestProblems, REQUEST_STATES } from './request-state.mjs'
+
+const SHA = /^[0-9a-f]{40}$/i
+
+export function createDeployService({ components = [], git, loadRequest, baseDir, checks: runChecks = runCodeChecks, install, logger, timeoutMs = 900_000 } = {}) {
   return {
-    async deploy({ requestId, component, branch, confirm } = {}) {
+    async deploy({ requestId, component, branch, confirm, specRepo, specDir, keyPath } = {}) {
       if (!requestId || confirm !== requestId) throw new Error('нужно подтверждение: confirm должен совпадать с requestId')
+      if (!loadRequest) throw new Error('загрузка заявки не настроена')
+      const loaded = await loadRequest({ requestId, specRepo, specDir, keyPath })
+      const { manifest, approval, status } = loaded
+      const problems = [...manifestProblems(manifest), ...approvalProblems(manifest, approval)]
+      if (problems.length) throw new Error(`заявка не готова к выпуску: ${problems.join('; ')}`)
+      if (status?.state !== REQUEST_STATES.verified) throw new Error(`выпуск разрешён только из verified, сейчас ${status?.state ?? 'нет статуса'}`)
+      if (Number(status.revision) !== Number(manifest.revision)) throw new Error('статус относится к другой ревизии заявки')
+      const result = (status.results ?? []).find((item) => item.repository === component)
+      if (!result) throw new Error(`в проверенной реализации нет ${component}`)
+      if (branch !== result.branch) throw new Error('ветка не принадлежит проверенной реализации заявки')
+      if (!SHA.test(result.implementationCommit ?? '')) throw new Error('implementationCommit не SHA')
       const target = components.find((item) => item.repository === component)
       if (!target) throw new Error(`нет компонента ${component}`)
-      const verified = await checks({ repository: component, branch })
-      if (!verified?.ok) throw new Error('проверки не зелёные: деплой отменён')
-      await git.clone({ repo: component, dir: target.dir, branch, keyPath: target.keyPath, fresh: true })
-      const merged = await git.mergeAndPush({
-        repo: component,
-        dir: target.dir,
-        branch,
-        target: 'main',
-        message: `deploy ${requestId}: merge ${branch}`,
-        keyPath: target.keyPath,
-      })
-      const installed = install
-        ? await install({ repository: component, sha: merged.sha, requestId })
-        : { required: true, command: 'bash deploy/install-remote.sh (запуск владельцем/root)' }
-      logger?.info?.('component deployed', { requestId, component, sha: merged.sha })
-      return { requestId, component, sha: merged.sha, installed }
+
+      const implDir = path.join(baseDir, requestId, 'impl', component.split('/').pop())
+      await git.clone({ repo: component, dir: implDir, branch: result.branch, keyPath: target.keyPath, fresh: true })
+      await git.checkoutCommit({ repo: component, dir: implDir, sha: result.implementationCommit, keyPath: target.keyPath })
+      const checked = await git.head({ dir: implDir })
+      if (checked !== result.implementationCommit) throw new Error('checkout не совпал с проверенным SHA')
+
+      // Интеграция с актуальным main: проверяем именно результат слияния.
+      const integrationDir = path.join(baseDir, requestId, 'integration', component.split('/').pop())
+      await git.clone({ repo: component, dir: integrationDir, branch: 'main', keyPath: target.keyPath, fresh: true })
+      const mergedSha = await git.mergeSha({ repo: component, dir: integrationDir, sha: result.implementationCommit, keyPath: target.keyPath })
+      const checks = await runChecks({ root: integrationDir, cwd: integrationDir, commands: target.checks ?? [], timeoutMs })
+      const failed = (checks.checks ?? []).filter((check) => check.exitCode !== 0 || check.error)
+      if (failed.length) throw new Error(`проверки результата слияния не прошли: ${failed.map((check) => check.command).join(', ')}`)
+
+      const publishedSha = await git.push({ repo: component, dir: integrationDir, target: 'main', keyPath: target.keyPath })
+      if (publishedSha !== mergedSha) throw new Error('опубликован не тот commit, который проверялся')
+
+      let installed = { state: 'installation_required', required: true, command: 'bash deploy/install-remote.sh (владелец/root)' }
+      if (install) {
+        installed = await install({ repository: component, sha: publishedSha, requestId })
+        if (!installed?.healthy) installed = { ...installed, state: 'installation_failed' }
+        else installed = { ...installed, state: 'healthy' }
+      }
+      if (specDir) await fs.writeFile(path.join(specDir, 'requests', requestId, 'release.json'), `${JSON.stringify({
+        requestId, revision: manifest.revision, component, branch: result.branch,
+        implementationCommit: result.implementationCommit, mergedSha, checkedSha: mergedSha, publishedSha,
+        installed, at: new Date().toISOString(),
+      }, null, 2)}\n`, 'utf8').catch(() => {})
+      logger?.info?.('verified integration published', { requestId, component, mergedSha, installed: installed.state })
+      return {
+        requestId,
+        component,
+        implementationCommit: result.implementationCommit,
+        mergedSha,
+        checkedSha: mergedSha,
+        publishedSha,
+        installed,
+        states: { merged: true, installation_required: installed.state === 'installation_required', installing: false, healthy: installed.state === 'healthy' },
+      }
     },
   }
 }

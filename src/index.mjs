@@ -250,16 +250,10 @@ async function main() {
   const deployService = createDeployService({
     components: config.spec.components,
     git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
-    checks: async ({ repository, branch }) => {
-      const component = config.spec.components.find((item) => item.repository === repository)
-      const dir = path.join(config.spec.implementDir, 'verify', repository.split('/').pop(), branch.replace(/[^A-Za-z0-9._-]/g, '_'))
-      await createGitHubClient({ keyDir: config.spec.keyDir, logger }).clone({ repo: repository, dir, branch, keyPath: component.keyPath, fresh: true })
-      const result = await runCodeChecks({ root: dir, cwd: dir, commands: component.checks ?? [], timeoutMs: config.task.timeoutMs })
-      return { ok: (result.checks ?? []).every((check) => check.exitCode === 0 && !check.error) }
-    },
+    loadRequest: (input) => implementService.loadRequest(input),
+    baseDir: config.spec.implementDir,
     logger,
   })
-
   const vision = new VisionClient({
     baseUrl: config.vision.baseUrl,
     apiKey: config.vision.apiKey,
@@ -393,6 +387,12 @@ async function main() {
       activity: (query) => bot.activity?.recent?.(query) ?? [],
       usage: () => bot.usageSnapshot?.() ?? {},
       onCreateRequest: (body) => requestService.create(body),
+      onApprove: (body) => requestService.approve({
+        requestId: String(body.requestId),
+        specRepo: config.spec.repo,
+        specDir: config.spec.dir,
+        keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
+      }),
       onDeploy: (body) => deployService.deploy({
         requestId: String(body.requestId),
         component: String(body.component),

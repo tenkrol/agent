@@ -5,131 +5,148 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { createImplementService } from '../src/workflow/implement.mjs'
 
-test('implement runs DSH in an isolated checkout and pushes impl branches', async () => {
+const SHA_A = 'a'.repeat(40)
+const SHA_B = 'b'.repeat(40)
+const SHA_C = 'c'.repeat(40)
+
+async function setup({ requestId = 'REQ-0009', approval = true, status = 'ready', manifestOverrides = {}, componentOverrides = {}, approvalOverrides } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'implement-'))
-  try {
-    const specDir = path.join(root, 'spec')
-    await fs.mkdir(path.join(specDir, 'requests', 'REQ-0009'), { recursive: true })
-    await fs.writeFile(path.join(specDir, 'requests', 'REQ-0009', 'manifest.json'), JSON.stringify({
-      schemaVersion: 1,
-      requestId: 'REQ-0009',
+  const specDir = path.join(root, 'spec')
+  const dir = path.join(specDir, 'requests', requestId)
+  await fs.mkdir(dir, { recursive: true })
+  const component = {
+    repository: 'tenkrol/agent',
+    changeId: 'PLA-99',
+    baseCommit: SHA_A,
+    specificationCommit: SHA_B,
+    branch: `spec/${requestId}-PLA-99`,
+    ...componentOverrides,
+  }
+  const manifest = {
+    schemaVersion: 1,
+    requestId,
+    revision: 1,
+    title: 'Доработка',
+    executionPolicy: 'reviewed',
+    releasePolicy: 'manual',
+    components: [component],
+    ...manifestOverrides,
+  }
+  await fs.writeFile(path.join(dir, 'manifest.json'), JSON.stringify(manifest))
+  await fs.writeFile(path.join(dir, 'request.md'), `# ${requestId}\n\nСделай доработку`)
+  if (approval) {
+    await fs.writeFile(path.join(dir, 'approval.json'), JSON.stringify({
+      requestId,
       revision: 1,
-      title: 'Доработка',
-      executionPolicy: 'reviewed',
-      releasePolicy: 'manual',
-      components: [{ repository: 'tenkrol/agent', changeId: 'PLA-99', baseCommit: 'a'.repeat(40), specificationCommit: 'b'.repeat(40), branch: 'spec/REQ-0009-PLA-99' }],
+      approvedBy: 'owner',
+      approvedAt: '2026-10-18T20:00:00.000Z',
+      components: [approvalOverrides ?? component],
     }))
-    await fs.writeFile(path.join(specDir, 'requests', 'REQ-0009', 'request.md'), '# REQ-0009\n\nСделай доработку')
+  }
+  if (status) await fs.writeFile(path.join(dir, 'status.json'), JSON.stringify({ requestId, state: status, revision: 1 }))
+  const calls = []
+  const git = {
+    async clone(options) { calls.push({ kind: 'clone', ...options }); return { dir: options.dir, sha: SHA_A } },
+    async checkoutCommit(options) { calls.push({ kind: 'checkout', ...options }); return options.sha },
+    async commitAndPush(options) { calls.push({ kind: 'push', ...options }); return { sha: SHA_C, compareUrl: 'https://example/compare' } },
+    async head() { return SHA_B },
+  }
+  return { root, specDir, dir, manifest, component, calls, git }
+}
+
+const service = (git, runner, extra = {}) => createImplementService({
+  baseDir: '/tmp/work',
+  timeoutMs: 1000,
+  components: [{ repository: 'tenkrol/agent', keyPath: '/tmp/key', checks: [['node', '--test']] }],
+  logger: { info() {} },
+  git,
+  runner,
+  ...extra,
+})
+
+test('ready+approved request runs DSH at the approved specification commit and publishes impl', async () => {
+  const ctx = await setup()
+  try {
     const calls = []
-    const service = createImplementService({
-      baseDir: path.join(root, 'work'),
-      timeoutMs: 1000,
-      components: [{ repository: 'tenkrol/agent', keyPath: '/tmp/key' }],
-      logger: { info() {} },
-      git: {
-        async clone(options) { calls.push({ kind: 'clone', ...options }); return { dir: options.dir, sha: 'a'.repeat(40) } },
-        async commitAndPush(options) { calls.push({ kind: 'push', ...options }); return { sha: 'c'.repeat(40), compareUrl: 'https://example/compare' } },
-      },
-      runner: { async run(input) { calls.push({ kind: 'run', ...input }); return { ok: true, text: 'готово', usage: { steps: 2, totalTokens: 5 } } } },
+    const impl = service(ctx.git, { async run(input) { calls.push(input); return { ok: true, text: 'готово', usage: { steps: 2, totalTokens: 5 } } } }, {
+      runChecks: async () => ({ checks: [{ command: 'node --test', exitCode: 0 }] }),
     })
-    const result = await service.implement({ requestId: 'REQ-0009', specRepo: 'tenkrol/assistant-work', specDir, keyPath: '/tmp/key' })
-    assert.equal(result.results.length, 1)
+    const result = await impl.implement({ requestId: 'REQ-0009', specRepo: 'tenkrol/assistant-work', specDir: ctx.specDir, keyPath: '/tmp/key' })
+    assert.equal(result.state, 'verified')
     assert.equal(result.results[0].branch, 'impl/REQ-0009-PLA-99')
-    const run = calls.find((call) => call.kind === 'run')
-    assert.match(run.task, /REQ-0009/)
-    assert.match(run.workspaceDir, /REQ-0009\/agent$/)
-    assert.equal(run.maxSteps, 100)
-    assert.equal(run.tokenBudget, 2500000)
-    assert.ok(calls.some((call) => call.kind === 'push' && call.branch === 'impl/REQ-0009-PLA-99'))
+    assert.ok(ctx.calls.some((call) => call.kind === 'checkout' && call.sha === SHA_B), 'checkout по specificationCommit')
+    assert.equal(calls.length, 1)
+    assert.match(calls[0].task, /REQ-0009/)
+    const status = JSON.parse(await fs.readFile(path.join(ctx.dir, 'status.json'), 'utf8'))
+    assert.equal(status.state, 'verified')
   } finally {
-    await fs.rm(root, { recursive: true, force: true })
+    await fs.rm(ctx.root, { recursive: true, force: true })
   }
 })
 
-test('a failed DSH run does not push an impl branch', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'implement-'))
+test('draft, no approval, changed SHA and empty components never start DSH', async () => {
+  for (const scenario of [
+    { status: 'draft' },
+    { approval: false },
+    { componentOverrides: { specificationCommit: SHA_C }, approvalOverrides: { repository: 'tenkrol/agent', changeId: 'PLA-99', baseCommit: SHA_A, specificationCommit: SHA_B, branch: 'spec/REQ-0009-PLA-99' } },
+    { manifestOverrides: { components: [] } },
+  ]) {
+    const ctx = await setup(scenario)
+    try {
+      let runs = 0
+      const impl = service(ctx.git, { async run() { runs += 1; return { ok: true, usage: {} } } })
+      await assert.rejects(() => impl.implement({ requestId: 'REQ-0009', specRepo: 'x', specDir: ctx.specDir, keyPath: '/tmp/key' }), /не готова/)
+      assert.equal(runs, 0)
+    } finally {
+      await fs.rm(ctx.root, { recursive: true, force: true })
+    }
+  }
+})
+
+test('a failed DSH run records failed and does not publish an impl branch', async () => {
+  const ctx = await setup()
   try {
-    const specDir = path.join(root, 'spec')
-    await fs.mkdir(path.join(specDir, 'requests', 'REQ-0010'), { recursive: true })
-    await fs.writeFile(path.join(specDir, 'requests', 'REQ-0010', 'manifest.json'), JSON.stringify({
-      components: [{ repository: 'tenkrol/agent', changeId: 'PLA-99', branch: 'spec/REQ-0010-PLA-99', specificationCommit: 'b'.repeat(40) }],
-    }))
-    await fs.writeFile(path.join(specDir, 'requests', 'REQ-0010', 'request.md'), '# REQ-0010')
     const pushes = []
-    const service = createImplementService({
-      baseDir: path.join(root, 'work'),
-      components: [{ repository: 'tenkrol/agent', keyPath: '/tmp/key' }],
-      git: {
-        async clone(options) { return { dir: options.dir, sha: 'a'.repeat(40) } },
-        async commitAndPush(options) { pushes.push(options); return { sha: 'c'.repeat(40), compareUrl: 'x' } },
-      },
-      runner: { async run() { return { ok: false, text: 'провал' } } },
-    })
-    await assert.rejects(() => service.implement({ requestId: 'REQ-0010', specRepo: 'x', specDir, keyPath: '/tmp/key' }), /DSH/)
-    assert.equal(pushes.length, 0)
+    const git = { ...ctx.git, async commitAndPush(options) { pushes.push(options); return { sha: SHA_C, compareUrl: 'x' } } }
+    const impl = service(git, { async run() { return { ok: false, text: 'провал' } } })
+    await assert.rejects(() => impl.implement({ requestId: 'REQ-0009', specRepo: 'x', specDir: ctx.specDir, keyPath: '/tmp/key' }), /DSH/)
+    assert.ok(!pushes.some((push) => push.branch?.startsWith('impl/')), 'ветка impl не публикуется')
+    const status = JSON.parse(await fs.readFile(path.join(ctx.dir, 'status.json'), 'utf8'))
+    assert.equal(status.state, 'failed')
   } finally {
-    await fs.rm(root, { recursive: true, force: true })
+    await fs.rm(ctx.root, { recursive: true, force: true })
   }
 })
 
-test('POST /v1/implement validates requestId and calls the service', async () => {
-  const { createBridgeServer } = await import('../src/bot-link/bridge-http.mjs')
-  const { createTestLogger } = await import('./helpers.mjs')
-  const seen = []
-  const server = createBridgeServer({
-    token: 'secret',
-    port: 0,
-    logger: createTestLogger(),
-    onSubmit: async () => ({ taskId: 't' }),
-    onImplement: async ({ requestId }) => { seen.push(requestId); return { requestId, results: [] } },
-  })
-  const address = await server.start()
+test('red checks block publication and keep failed state', async () => {
+  const ctx = await setup()
   try {
-    const bad = await fetch(`http://127.0.0.1:${address.port}/v1/implement`, {
-      method: 'POST',
-      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
-      body: JSON.stringify({ requestId: 'nope' }),
-    })
-    assert.equal(bad.status, 400)
-    const ok = await fetch(`http://127.0.0.1:${address.port}/v1/implement`, {
-      method: 'POST',
-      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
-      body: JSON.stringify({ requestId: 'REQ-0009' }),
-    })
-    assert.equal(ok.status, 202)
-    assert.deepEqual(seen, ['REQ-0009'])
-  } finally {
-    await server.stop()
-  }
-})
-
-
-test('failed checks trigger repair and block the push when still red', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'implement-checks-'))
-  try {
-    const specDir = path.join(root, 'spec')
-    await fs.mkdir(path.join(specDir, 'requests', 'REQ-0011'), { recursive: true })
-    await fs.writeFile(path.join(specDir, 'requests', 'REQ-0011', 'manifest.json'), JSON.stringify({
-      components: [{ repository: 'tenkrol/agent', changeId: 'PLA-99', branch: 'spec/REQ-0011-PLA-99', specificationCommit: 'b'.repeat(40) }],
-    }))
-    await fs.writeFile(path.join(specDir, 'requests', 'REQ-0011', 'request.md'), '# REQ-0011')
     const pushes = []
-    let checksCalls = 0
-    const service = createImplementService({
-      baseDir: path.join(root, 'work'),
+    const git = { ...ctx.git, async commitAndPush(options) { pushes.push(options); return { sha: SHA_C, compareUrl: 'x' } } }
+    const impl = service(git, { async run() { return { ok: true, usage: {} } } }, {
       maxRepairs: 1,
-      components: [{ repository: 'tenkrol/agent', keyPath: '/tmp/key', checks: [['node', '--test']] }],
-      git: {
-        async clone(options) { return { dir: options.dir, sha: 'a'.repeat(40) } },
-        async commitAndPush(options) { pushes.push(options); return { sha: 'c'.repeat(40), compareUrl: 'x' } },
-      },
-      runner: { async run() { return { ok: true, usage: {} } } },
-      runChecks: async () => { checksCalls += 1; return { checks: [{ command: 'node --test', exitCode: 1, stdout: 'fail', stderr: '' }] } },
+      runChecks: async () => ({ checks: [{ command: 'node --test', exitCode: 1, stdout: 'fail', stderr: '' }] }),
     })
-    await assert.rejects(() => service.implement({ requestId: 'REQ-0011', specRepo: 'x', specDir, keyPath: '/tmp/key' }), /проверки/)
-    assert.equal(pushes.length, 0)
-    assert.equal(checksCalls, 2)
+    await assert.rejects(() => impl.implement({ requestId: 'REQ-0009', specRepo: 'x', specDir: ctx.specDir, keyPath: '/tmp/key' }), /проверки/)
+    assert.ok(!pushes.some((push) => push.branch?.startsWith('impl/')))
   } finally {
-    await fs.rm(root, { recursive: true, force: true })
+    await fs.rm(ctx.root, { recursive: true, force: true })
+  }
+})
+
+test('verified request rejects a second attempt unless retry is explicit', async () => {
+  const ctx = await setup({ status: 'verified' })
+  try {
+    let runs = 0
+    const impl = service(ctx.git, { async run() { runs += 1; return { ok: true, usage: {} } } }, {
+      runChecks: async () => ({ checks: [] }),
+    })
+    await assert.rejects(() => impl.implement({ requestId: 'REQ-0009', specRepo: 'x', specDir: ctx.specDir, keyPath: '/tmp/key' }), /уже реализована/)
+    assert.equal(runs, 0)
+    const result = await impl.implement({ requestId: 'REQ-0009', specRepo: 'x', specDir: ctx.specDir, keyPath: '/tmp/key', retry: true })
+    assert.equal(result.state, 'verified')
+    assert.equal(runs, 1)
+  } finally {
+    await fs.rm(ctx.root, { recursive: true, force: true })
   }
 })

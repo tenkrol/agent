@@ -101,6 +101,7 @@ export class BridgeServer {
     agents,
     usage,
     onCreateRequest,
+    onApprove,
     onImplement,
     onDeploy,
     activity,
@@ -123,6 +124,7 @@ export class BridgeServer {
     this.agents = agents
     this.usage = usage
     this.onCreateRequest = onCreateRequest
+    this.onApprove = onApprove
     this.onImplement = onImplement
     this.onDeploy = onDeploy
     this.activity = activity
@@ -186,7 +188,7 @@ export class BridgeServer {
     const known = pathname === '/bridge' || pathname === '/v1/files' || pathname.startsWith('/v1/files/')
       || pathname === '/v1/tasks' || pathname.startsWith('/v1/tasks/') || pathname === '/v1/capabilities'
       || pathname === '/v1/agents' || pathname === '/v1/activity' || pathname === '/v1/usage'
-      || pathname === '/v1/requests' || pathname === '/v1/implement' || pathname === '/v1/deploy'
+      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/implement' || pathname === '/v1/deploy'
     if (!known) {
       send(404, { ok: false, error: 'not found' })
       return
@@ -225,6 +227,14 @@ export class BridgeServer {
         const result = await this.onDeploy(payload ?? {})
         return send(202, { ok: true, ...result })
       }
+      if (request.method === 'POST' && pathname === '/v1/approve') {
+        if (!this.onApprove) return send(503, { ok: false, error: 'approve disabled' })
+        const payload = await this.#json(request)
+        const requestId = String(payload?.requestId ?? '').trim()
+        if (!/^REQ-\d{4,}$/.test(requestId)) return send(400, { ok: false, error: 'requestId required' })
+        const result = await this.onApprove({ requestId })
+        return send(202, { ok: true, ...result })
+      }
       if (request.method === 'POST' && pathname === '/v1/implement') {
         if (!this.onImplement) return send(503, { ok: false, error: 'implement disabled' })
         const payload = await this.#json(request)
@@ -233,7 +243,7 @@ export class BridgeServer {
         const result = await this.onImplement({ requestId })
         return send(202, { ok: true, ...result })
       }
-      if (request.method === 'POST' && pathname === '/v1/requests') {
+      if (request.method === 'POST' && pathname === '/v1/requests' || pathname === '/v1/approve') {
         if (!this.onCreateRequest) return send(503, { ok: false, error: 'requests disabled' })
         const payload = await this.#json(request)
         const text = String(payload?.text ?? '').trim()
