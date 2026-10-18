@@ -1200,3 +1200,13 @@ Merge/деплой PLA-23 не выполнялись.
   usage: cacheRead не прибавляется повторно.
 - Живые API проверены: agents отдаёт orchestrator/dsh/quick с profile/limits.
 - Тесты: 465. Дельты влиты, PLA-26 в архиве.
+
+## 2026-10-18: E3 инфраструктура готова, REQ-0002 опубликован
+
+- `tenkrol/assistant-work` создан (private), deploy keys agent/assistant/assistant-work
+  проверены: серверный ключ успешно запушил ветку.
+- Заявки: `REQ-0001` (процесс), `REQ-0002` (версия агента: PLA-28 + PLB-016) в ветке
+  `req/REQ-0002`; манифесты проходят валидатор.
+- Ветки компонентов: `e3-req-0002-agent` (PLA-28), `e3-req-0002-assistant` (PLB-016);
+  compare-ссылки готовы, PR через API пока не создаётся (нужен token/App).
+- Инструменты E3: request-manifest, request-new, spec-sync, execution/git.
