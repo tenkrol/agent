@@ -1306,3 +1306,10 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - selectExecutor: files для документов/файлов, иначе dsh; явный executorId не переопределяется;
 - live: XLSX-задача `192227-bkm` → done/passed;
 - release `release-20261018-192205`, active; тесты 493.
+
+## 2026-10-18: PLA-36 / E9 закрыт
+
+- monitor executor (capabilities monitor/host/alerts) и профиль agentProfiles.monitor;
+- chooseExecutorId: monitor → files → dsh, явный executorId сохраняется;
+- live задача `192527-ou` (диск/память/dsh-agent) → done/not_required;
+- release `release-20261018-192514`, active; тесты 494.
