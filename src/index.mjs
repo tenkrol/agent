@@ -335,6 +335,7 @@ async function main() {
       host: config.bridge.bind,
       port: config.bridge.port,
       maxTaskChars: config.bridge.maxTaskChars,
+      release,
       logger,
       onSubmit: ({ task, source, requestId }) => bot.submitBridgedTask({ task, source, requestId }),
       contractV2: config.bridge.contractV2,

@@ -109,6 +109,7 @@ export class BridgeServer {
     port = 8787,
     maxBytes = DEFAULT_MAX_BYTES,
     maxTaskChars = DEFAULT_MAX_TASK_CHARS,
+    release,
     logger,
   } = {}) {
     this.token = token
@@ -128,6 +129,7 @@ export class BridgeServer {
     this.port = port
     this.maxBytes = maxBytes
     this.maxTaskChars = maxTaskChars
+    this.release = release
     this.logger = logger
     this.server = undefined
     this.address = undefined
@@ -173,7 +175,7 @@ export class BridgeServer {
     if (request.method === 'GET' && (pathname === '/health' || pathname === '/v1/health')) {
       // No secret needed: the tunnel only exposes loopback, and a health probe
       // must work without one. It reveals nothing but "alive".
-      send(200, { ok: true, service: 'agent-bridge', contract: 2 })
+      send(200, { ok: true, service: 'agent-bridge', contract: 2, ...(this.release ? { release: this.release } : {}) })
       return
     }
 

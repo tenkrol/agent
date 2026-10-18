@@ -190,3 +190,20 @@ test('a full queue refuses a bridged task with a readable reason', async () => {
     await env.close()
   }
 })
+
+test('health reports the installed release when configured', async () => {
+  const server = createBridgeServer({
+    token: TOKEN,
+    port: 0,
+    release: 'release-test-1',
+    logger: createTestLogger(),
+    onSubmit: async () => ({ taskId: 't' }),
+  })
+  const address = await server.start()
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/health`)
+    assert.equal((await response.json()).release, 'release-test-1')
+  } finally {
+    await server.stop()
+  }
+})
