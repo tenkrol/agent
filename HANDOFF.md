@@ -1290,3 +1290,12 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
   API возвращает `installed.required` и команду для владельца/root.
 - release `release-20261018-183945`, active; тесты 490.
 - E7 не закрыт: фактическая установка и подтверждение владельца ещё не выполнены.
+
+## 2026-10-18: PLA-34 / E7 закрыт
+
+- deploy API: confirm==requestId, checks, merge impl→main; install — вручную владельцем.
+- Live: REQ-0009/PLA-32 → deploy merge `14837cb`, install release
+  `release-20261018-191138`, сервис active.
+- Причина прежних падений: каталог клона содержал root-owned файлы после ручных
+  git-операций; `git clone fresh` не мог удалить. Исправлено `chown -R agent`.
+- Тесты: 490. README обновлён во всех трёх репозиториях.

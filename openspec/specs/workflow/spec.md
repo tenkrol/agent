@@ -120,3 +120,19 @@ request/proposal/acceptance и manifest; manifest проверяется до з
 - WHEN repair не исправил
 - THEN ветка impl не публикуется
 - AND ошибка возвращается вызывающему.
+
+## ADDED Requirements
+
+### Requirement: Установка только после подтверждения и проверок
+Установка реализации ДОЛЖНА требовать подтверждения владельца и зелёных проверок;
+иначе merge/install не выполняются.
+
+#### Scenario: Нет подтверждения
+- GIVEN запрос без confirm
+- WHEN вызывается deploy
+- THEN установка не запускается.
+
+#### Scenario: Красные проверки
+- GIVEN проверки ветки не зелёные
+- WHEN вызывается deploy
+- THEN merge и install не выполняются.
