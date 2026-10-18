@@ -105,6 +105,8 @@ export class BridgeServer {
     onSpecify,
     onPoll,
     pollStatus,
+    observers,
+    onObserve,
     onImplement,
     onDeploy,
     activity,
@@ -131,6 +133,8 @@ export class BridgeServer {
     this.onSpecify = onSpecify
     this.onPoll = onPoll
     this.pollStatus = pollStatus
+    this.observers = observers
+    this.onObserve = onObserve
     this.onImplement = onImplement
     this.onDeploy = onDeploy
     this.activity = activity
@@ -194,7 +198,7 @@ export class BridgeServer {
     const known = pathname === '/bridge' || pathname === '/v1/files' || pathname.startsWith('/v1/files/')
       || pathname === '/v1/tasks' || pathname.startsWith('/v1/tasks/') || pathname === '/v1/capabilities'
       || pathname === '/v1/agents' || pathname === '/v1/activity' || pathname === '/v1/usage'
-      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/specify' || pathname === '/v1/poll' || pathname === '/v1/poll/status' || pathname === '/v1/implement' || pathname === '/v1/deploy'
+      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/specify' || pathname === '/v1/poll' || pathname === '/v1/poll/status' || pathname === '/v1/observers' || pathname === '/v1/observe' || pathname === '/v1/implement' || pathname === '/v1/deploy'
     if (!known) {
       send(404, { ok: false, error: 'not found' })
       return
@@ -232,6 +236,13 @@ export class BridgeServer {
         const payload = await this.#json(request)
         const result = await this.onDeploy(payload ?? {})
         return send(202, { ok: true, ...result })
+      }
+      if (request.method === 'GET' && pathname === '/v1/observers') {
+        return send(200, { ok: true, sources: this.observers?.() ?? [] })
+      }
+      if (request.method === 'POST' && pathname === '/v1/observe') {
+        if (!this.onObserve) return send(503, { ok: false, error: 'observe disabled' })
+        return send(200, { ok: true, ...(await this.onObserve()) })
       }
       if (request.method === 'GET' && pathname === '/v1/poll/status') {
         return send(200, { ok: true, ...(this.pollStatus?.() ?? {}) })

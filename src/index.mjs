@@ -39,6 +39,8 @@ import { createComponentSpecService } from './workflow/component-specs.mjs'
 import { createImplementService } from './workflow/implement.mjs'
 import { createRequestPoller } from './workflow/request-poller.mjs'
 import { createSpecifyService } from './workflow/specify.mjs'
+import { createObserverRegistry, createGithubSource, createServerSource } from './workflow/observers.mjs'
+import os from 'node:os'
 import { createDeployService } from './workflow/deploy.mjs'
 import { createGitHubClient } from './execution/git.mjs'
 import { ProceduresStore } from './storage/procedures.mjs'
@@ -382,6 +384,19 @@ async function main() {
 
   delivery.onFailed = (record, error) => bot.notifyDeliveryFailure(record, error)
 
+  const observerRegistry = createObserverRegistry({
+    sources: [
+      createGithubSource({
+        git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
+        repos: [config.spec.repo, 'tenkrol/agent', 'tenkrol/assistant'],
+        keyPathFor: (repo) => `${config.spec.keyDir}/${String(repo).split('/').pop()}_ed25519`,
+        dirRoot: `${config.spec.implementDir}/observe`,
+      }),
+      createServerSource({ probe: async () => ({ uptime: process.uptime(), load: os.loadavg(), rss: process.memoryUsage().rss }) }),
+    ],
+    logger,
+  })
+
   const requestPoller = createRequestPoller({
     git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
     repo: config.spec.repo,
@@ -419,6 +434,8 @@ async function main() {
       onCreateRequest: (body) => requestService.create(body),
       onPoll: () => requestPoller.scan(),
       pollStatus: () => requestPoller.status(),
+      observers: () => observerRegistry.sources(),
+      onObserve: () => observerRegistry.observe(),
       onSpecify: (body) => specifyService.specify({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,
