@@ -2,6 +2,6 @@
 - [x] 1. manifest.json + валидатор
 - [x] 2. тесты валидатора
 - [x] 3. правило branch→PR→merge→release в workflow-спеке
-- [ ] 4. решение владельца: имя/видимость репозитория и GitHub-доступ
+- [~] 4. решение владельца: assistant-work/private выбрано; ждём создания repo и deploy keys
 - [ ] 5. создание репозитория и первый REQ после решения
 - [ ] 6. commit/push SHA
