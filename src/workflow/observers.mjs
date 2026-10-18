@@ -13,7 +13,7 @@ export function createObserverRegistry({ sources = [], now = () => Date.now(), l
     for (const source of sources) {
       if (signal?.aborted) break
       try {
-        const evidence = await source.fetch({ signal })
+        const evidence = await source.read({ signal })
         const previous = last.get(source.id)
         last.set(source.id, { at, evidence })
         report.push({ id: source.id, kind: source.kind, status: 'ok', checkedAt: at, freshAt: at, evidence })
@@ -36,7 +36,7 @@ export function createGithubSource({ id = 'github', git, repos = [], keyPathFor 
   return {
     id,
     kind: 'github',
-    async fetch() {
+    async read() {
       const evidence = []
       for (const repo of repos) {
         const dir = `${dirRoot}/${repo.split('/').pop()}`
@@ -51,5 +51,5 @@ export function createGithubSource({ id = 'github', git, repos = [], keyPathFor 
 
 /** Серверный источник: произвольный probe-порт возвращает наблюдаемые факты. */
 export function createServerSource({ id = 'server', probe } = {}) {
-  return { id, kind: 'server', async fetch() { return probe() } }
+  return { id, kind: 'server', async read() { return probe() } }
 }

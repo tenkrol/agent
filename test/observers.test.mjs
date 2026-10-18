@@ -6,7 +6,7 @@ test('unavailable source is explicit, not an empty result', async () => {
   const registry = createObserverRegistry({
     now: () => 1000,
     sources: [
-      { id: 'github', kind: 'github', async fetch() { throw new Error('access denied') } },
+      { id: 'github', kind: 'github', async read() { throw new Error('access denied') } },
       createServerSource({ id: 'server', probe: async () => ({ disk: 10 }) }),
     ],
   })
