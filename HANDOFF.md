@@ -1313,3 +1313,10 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - chooseExecutorId: monitor → files → dsh, явный executorId сохраняется;
 - live задача `192527-ou` (диск/память/dsh-agent) → done/not_required;
 - release `release-20261018-192514`, active; тесты 494.
+
+## 2026-10-18: PLA-37 / E10 закрыт
+
+- personal executor: capabilities personal/memory/reminders/preferences;
+- taskPrefix-функция с memory.render(); monitor→personal→files→dsh, явный id сохраняется;
+- live задача `193014-vzl` «что ты обо мне помнишь» → done;
+- release `release-20261018-192911`, active; тесты 494.
