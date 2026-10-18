@@ -1157,7 +1157,7 @@ Merge/деплой PLA-23 не выполнялись.
 
 ## 2026-10-18: PLA-20 закрыт — SQLite + workers=2 с изоляцией workspace
 
-- `main` = `2038191` (+ архив/доки); production release `release-20261018-073743`,
+- `main` = `2038191` (+ архив/доки); production release `release-20261018-073953`,
   `QUEUE_STORE=sqlite`, `QUEUE_WORKERS=2`, `WORKSPACE_PER_TASK=true`, сервис active.
 - Per-task workspace: `tasks/<id>/` с inbox/outbox/AGENTS.md; runner получает
   `workspaceDir` на запуск; вложения/файлы/проверка — в папке задачи.
