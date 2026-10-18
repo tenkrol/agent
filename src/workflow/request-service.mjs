@@ -7,8 +7,10 @@ import { createRequestDraft } from './requests.mjs'
 import { createGitHubClient } from '../execution/git.mjs'
 
 const nextId = async (repoDir) => {
-  const entries = await fs.readdir(path.join(repoDir, 'requests')).catch(() => [])
-  const numbers = entries.map((name) => /^REQ-(\d{4,})$/.exec(name)).filter(Boolean).map((match) => Number(match[1]))
+  const names = await fs.readdir(path.join(repoDir, 'requests')).catch(() => [])
+  const branchDirs = [path.join(repoDir, '.git', 'refs', 'remotes', 'origin', 'req'), path.join(repoDir, '.git', 'refs', 'heads', 'req')]
+  for (const branchDir of branchDirs) names.push(...await fs.readdir(branchDir).catch(() => []))
+  const numbers = names.map((name) => /^REQ-(\d{4,})/.exec(name)).filter(Boolean).map((match) => Number(match[1]))
   return `REQ-${String((numbers.length ? Math.max(...numbers) : 0) + 1).padStart(4, '0')}`
 }
 
@@ -18,7 +20,7 @@ export function createRequestService({ repo, repoDir, keyDir = '/etc/agent/githu
       const clean = String(text ?? '').trim()
       if (clean === '') throw new Error('пустой текст заявки')
       const keyPath = path.join(keyDir, `${String(repo).split('/').pop()}_ed25519`)
-      await git.clone({ repo, dir: repoDir, branch: 'main', keyPath })
+      await git.clone({ repo, dir: repoDir, branch: 'main', keyPath, fresh: true })
       const requestId = await nextId(repoDir)
       const requestTitle = String(title ?? clean.split('\n')[0]).slice(0, 120)
       await createRequestDraft({

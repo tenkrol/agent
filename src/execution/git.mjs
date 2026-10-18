@@ -36,8 +36,9 @@ export function createGitHubClient({ keyDir = '/etc/agent/github', timeoutMs = G
 
   return {
     /** Клонировать или обновить рабочую копию; возвращает sha. */
-    async clone({ repo, dir, branch = 'main', keyPath, depth = 0 } = {}) {
+    async clone({ repo, dir, branch = 'main', keyPath, depth = 0, fresh = false } = {}) {
       const key = keyPath ?? keyFor(repo)
+      if (fresh) await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
       await fs.mkdir(path.dirname(dir), { recursive: true }).catch(() => {})
       try {
         await fs.access(path.join(dir, '.git'))
