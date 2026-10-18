@@ -51,7 +51,7 @@ export const TRANSITIONS = {
   queued: [STATUS.running, STATUS.cancelled, STATUS.interrupted],
   running: [STATUS.done, STATUS.failed, STATUS.cancelled, STATUS.interrupted, STATUS.awaiting_owner, STATUS.verifying],
   awaiting_owner: [STATUS.queued, STATUS.cancelled],
-  verifying: [STATUS.done, STATUS.partial, STATUS.failed, STATUS.cancelled, STATUS.interrupted, STATUS.running],
+  verifying: [STATUS.done, STATUS.partial, STATUS.failed, STATUS.cancelled, STATUS.interrupted, STATUS.running, STATUS.awaiting_owner],
   interrupted: [STATUS.queued, STATUS.cancelled],
   done: [],
   partial: [],
