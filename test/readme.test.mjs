@@ -11,3 +11,9 @@ test('README содержит строку E5 implementation check', async () =>
   const readme = await fs.readFile(path.join(root, 'README.md'), 'utf8')
   assert.match(readme, /^E5 implementation check/m)
 })
+
+/** README — часть результата REQ-0010: строка сквозной приёмки не должна потеряться. */
+test('README содержит строку Acceptance E2E smoke', async () => {
+  const readme = await fs.readFile(path.join(root, 'README.md'), 'utf8')
+  assert.match(readme, /^Acceptance E2E smoke/m)
+})
