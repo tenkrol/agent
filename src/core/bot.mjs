@@ -1000,7 +1000,7 @@ export class AgentBot {
     for (const file of files) {
       let bytes
       try {
-        bytes = await fs.readFile(path.join(this.config.workspace.dir, file.relPath))
+        bytes = await fs.readFile(file.path ?? path.join(this.config.workspace.dir, file.relPath))
       } catch (error) {
         this.logger?.warn('disk upload skipped, file unreadable', { file: file.relPath, error })
         continue
