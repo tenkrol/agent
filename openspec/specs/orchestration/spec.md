@@ -104,3 +104,13 @@ modelProfile, tools и status; метаданные доступны для API/
 - GIVEN DSH-исполнитель зарегистрирован
 - WHEN запрашивается describe()
 - THEN видны его лимиты, профиль модели и инструменты.
+
+## ADDED Requirements
+
+### Requirement: Профили агентов
+Оркестратор ДОЛЖЕН публиковать профиль модели/лимиты исполнителя в describe().
+
+#### Scenario: describe
+- GIVEN настроен профиль dsh
+- WHEN вызывается describe()
+- THEN profile виден в метаданных.

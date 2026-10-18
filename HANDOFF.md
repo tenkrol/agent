@@ -1192,3 +1192,11 @@ Merge/деплой PLA-23 не выполнялись.
 - Per-task workspace → fresh DSH session; continuation сохраняет сессию.
 - Retention `tasks/<id>`; `TASK_PER_USER_CONCURRENCY`.
 - Тесты: 463. Дельты влиты, PLA-25 в архиве.
+
+## 2026-10-18: PLA-26 / E2 закрыт (агент)
+
+- release `release-20261018-082659`, сервис active.
+- ActivityStore + `/v1/agents`, `/v1/activity`, `/v1/usage`; профили orchestrator/dsh/quick;
+  usage: cacheRead не прибавляется повторно.
+- Живые API проверены: agents отдаёт orchestrator/dsh/quick с profile/limits.
+- Тесты: 465. Дельты влиты, PLA-26 в архиве.
