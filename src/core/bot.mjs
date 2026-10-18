@@ -226,6 +226,9 @@ export class AgentBot {
       const payload = row.payload
       if (payload?.kind === 'personal') {
         await this.safeSend(payload.chatId, payload.text, { replyToMessageId: payload.replyToMessageId })
+        if (Array.isArray(payload.files) && payload.files.length > 0) {
+          await this.sendOutputs({ job: { id: payload.taskId, chatId: payload.chatId }, outputs: { selected: payload.files, skipped: [] } })
+        }
       } else if (payload?.event) {
         await this.delivery.enqueue(payload.event)
       } else {
@@ -1447,6 +1450,7 @@ export class AgentBot {
         chatId: job.chatId,
         text: quickText,
         replyToMessageId: this.jobReplyTo(job),
+        files: [],
       }
     const accepted = leaseContext.accept?.({
       status,
@@ -1478,6 +1482,7 @@ export class AgentBot {
     if (job.route) {
       await this.lifecycle.update(job.id, { resultSummary: { text: quickText, files: [], version: job.resultVersion ?? 1 } })
       await this.delivery?.enqueue(routeEvent)
+      leaseContext.markOutbox?.(routeEvent.eventId)
       return { quick: true, text: quickText }
     }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: quickStatus({ taskId: job.id }) })
@@ -1485,6 +1490,7 @@ export class AgentBot {
       quick.text,
       quickFooter({ tokens: quick.usage.totalTokens, usdText: formatUsd(cost.usd), taskId: job.id }),
     ].join('\n'), { replyToMessageId: this.jobReplyTo(job) })
+    leaseContext.markOutbox?.(personalOutbox.eventId)
     await this.mirrorResult(quick.text, job.id)
     return { quick: true, text: quick.text }
   }
@@ -2791,7 +2797,7 @@ export class AgentBot {
 
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
     const resultFiles = job.route ? await this.registerResultFiles(job, outputs) : []
-    await this.reportResult({ job, result, status: statusKind, statusMessageId, diskPaths, resultFiles, verification, leaseContext })
+    await this.reportResult({ job, result, status: statusKind, statusMessageId, diskPaths, resultFiles, verification, leaseContext, outputs })
     if (!job.route) {
       await this.sendOutputs({ job, outputs })
       await this.sendVoiceAnswer({ job, result })
@@ -2993,7 +2999,7 @@ export class AgentBot {
   }
 
   /** Answer text for the finished task. */
-  async reportResult({ job, result, status, statusMessageId, diskPaths = [], resultFiles = [], verification, leaseContext = {} }) {
+  async reportResult({ job, result, status, statusMessageId, diskPaths = [], resultFiles = [], verification, leaseContext = {}, outputs = { selected: [] } }) {
     // Текст ответа собирает домен delivery: ядро передаёт только данные и числа.
     const cost = costOf(result.usage, this.pricingOptions())
     const usdText = formatUsd(cost.usd)
@@ -3036,6 +3042,7 @@ export class AgentBot {
         return
       }
       await this.delivery?.enqueue(event)
+      leaseContext.markOutbox?.(event.eventId)
       return
     }
     const safeText = redactSecrets(text)
@@ -3049,6 +3056,7 @@ export class AgentBot {
       chatId: job.chatId,
       text: safeText,
       replyToMessageId: this.jobReplyTo(job),
+      files: outputs.selected.map((entry) => ({ path: entry.path, relPath: entry.relPath, size: entry.size, mtimeMs: entry.mtimeMs, photo: entry.photo })),
     }
     const personalAccepted = leaseContext.accept?.({
       status: status ?? 'done',
@@ -3065,6 +3073,7 @@ export class AgentBot {
       replyToMessageId: this.jobReplyTo(job),
     })
     await this.delivery?.trackPersonal?.({ taskId: job.id, text, chatId: job.chatId, receipt: sent?.messageId })
+    leaseContext.markOutbox?.(personalOutbox.eventId)
     await this.mirrorResult(text, job.id)
   }
 

@@ -216,3 +216,17 @@ test('a stale attempt is aborted and does not call onError after losing its leas
     assert.equal(errors, 0, 'onError не вызывается у stale-попытки')
   })
 })
+
+test('SQLite queue remains the source of truth when JSONL has no record (backup restore)', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 'new-task', requestKey: 'r', payload: { id: 'new-task' } })
+    const lifecycle = createTaskLifecycle({
+      journal: { recover: async () => [], pending: () => [], awaiting: () => [], get: () => undefined },
+      queueStore: queue,
+    })
+    await lifecycle.recover({ recordToJob: (record) => ({ id: record.id }), snapshot: async () => new Map(), workspaceDir: '/tmp' })
+    assert.equal(lifecycle.queue.some((job) => job.id === 'new-task'), true)
+    const claim = queue.claim({ owner: 'w1' })
+    assert.equal(claim.id, 'new-task')
+  })
+})

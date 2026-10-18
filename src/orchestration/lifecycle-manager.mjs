@@ -173,6 +173,9 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
           if (result.ok) parked = true
           return result
         }
+        const markOutbox = (eventId) => {
+          if (queueStore) queueStore.markOutboxEnqueued(eventId, { now: now() })
+        }
         const accept = (data = {}) => {
           if (!lease || !queueStore) return { ok: false, unsupported: true }
           const result = queueStore.accept({
@@ -195,7 +198,7 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
           : undefined
         heartbeat?.unref?.()
         try {
-          await runTask(job, { leaseSignal: leaseSignal.signal, owns, ...(queueStore && lease ? { accept, park } : {}) })
+          await runTask(job, { leaseSignal: leaseSignal.signal, owns, ...(queueStore && lease ? { accept, park, markOutbox } : {}) })
           if (lease) {
             if (accepted || parked) continue
             if (!owns()) {
