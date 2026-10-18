@@ -1265,12 +1265,28 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
   в заявке manifest компоненты заполнены.
 - Тесты: 481. PLA-29 в архиве.
 
-## 2026-10-18: PLA-32 / REQ-0009 — README E5 implementation check
+## 2026-10-18: PLA-31 / E5 закрыт
 
-- На ветке `spec/REQ-0009-PLA-32`: в README добавлена строка `E5 implementation check`
-  (раздел «Тесты и разработка»), тест `test/readme.test.mjs` проверяет её наличие.
-- Изменение только документационное: код, API, конфигурация и секреты не менялись;
-  деплой не требуется. В main не мержим.
-- `spec-check` — в порядке; новый тест зелёный. Полный прогон: 485 тестов,
-  482 pass, 3 cancelled в `lifecycle-sqlite.test.mjs` (сбой не связан с PLA-32,
-  воспроизводится отдельным запуском).
+- `POST /v1/implement`: заявка с `req/<REQ>`, компоненты на `spec/...`, DSH в
+  изолированном checkout, ветка `impl/<REQ>-<changeId>`.
+- Live: REQ-0009 / PLA-32 → `impl/REQ-0009-PLA-32` (`536463f`), DSH реально изменил
+  README/test/OpenSpec/HANDOFF; ветка запушена.
+- DSH-коммит и пустой commitAndPush больше не роняют поток; 485 тестов.
+- PR не создаётся через API: compare URL, нужен token/App.
+- release `release-20261018-183455`, active.
+
+## 2026-10-18: PLA-33 / E6 закрыт
+
+- после DSH: runCodeChecks (тесты + spec-check), до 2 repair-попыток с выводом ошибок;
+- красная ветка impl не пушится;
+- live-проверка `impl/REQ-0009-PLA-32`: spec-check ok, node --test 483 pass;
+- release `release-20261018-183737`, active; тесты 486.
+
+## 2026-10-18: E7 (PLA-34) — deploy готов, установка ждёт root
+
+- `POST /v1/deploy`: confirm==requestId, повторные проверки (тесты+spec-check),
+  merge `impl/*`→main, затем `install`.
+- Установщик не настроен: процесс агента работает под `agent`, `sudo -n` недоступен.
+  API возвращает `installed.required` и команду для владельца/root.
+- release `release-20261018-183945`, active; тесты 490.
+- E7 не закрыт: фактическая установка и подтверждение владельца ещё не выполнены.

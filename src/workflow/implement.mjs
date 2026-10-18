@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { runCodeChecks } from '../execution/checks.mjs'
 
 const promptFor = ({ requestId, changeId, text, branch }) => `Ты реализуешь заявку ${requestId}
 в компоненте ${changeId} на ветке ${branch}.
@@ -20,7 +21,7 @@ ${text}
 - если изменение уже реализовано, ничего не коммить;
 - в конце коротко перечисли изменённые файлы и проверки.`
 
-export function createImplementService({ components = [], git, runner, baseDir, timeoutMs, logger } = {}) {
+export function createImplementService({ components = [], git, runner, baseDir, timeoutMs, logger, maxSteps = 100, tokenBudget = 2_500_000, maxRepairs = 2, runChecks = runCodeChecks } = {}) {
   return {
     /** Прочитать заявку с ветки req/<requestId>. */
     async loadRequest({ requestId, specRepo, specDir, keyPath }) {
@@ -44,9 +45,30 @@ export function createImplementService({ components = [], git, runner, baseDir, 
           task: promptFor({ requestId, changeId: component.changeId, text: loaded.text, branch: component.branch }),
           workspaceDir: dir,
           timeoutMs,
+          maxSteps,
+          tokenBudget,
           signal,
         })
         if (!result?.ok) throw new Error(`DSH не смог реализовать ${component.changeId}: ${String(result?.text ?? result?.error ?? '').slice(0, 300)}`)
+        let checks = await runChecks({ root: dir, cwd: dir, commands: target.checks ?? [], timeoutMs, signal })
+        let repairs = 0
+        const failed = (result) => (result.checks ?? []).some((check) => check.exitCode !== 0 || check.error)
+        while (failed(checks) && repairs < maxRepairs) {
+          const failures = (checks.checks ?? []).filter((check) => check.exitCode !== 0 || check.error)
+            .map((check) => `$ ${check.command}\n${check.stdout ?? ''}\n${check.stderr ?? ''}`).join('\n\n').slice(-4000)
+          const repaired = await runner.run({
+            task: `Исправь ошибки проверок в ${component.changeId} (${requestId}).\n\n${failures}`,
+            workspaceDir: dir,
+            timeoutMs,
+            maxSteps,
+            tokenBudget,
+            signal,
+          })
+          repairs += 1
+          if (!repaired?.ok) break
+          checks = await runChecks({ root: dir, cwd: dir, commands: target.checks ?? [], timeoutMs, signal })
+        }
+        if (failed(checks)) throw new Error(`проверки не прошли: ${(checks.checks ?? []).filter((check) => check.exitCode !== 0 || check.error).map((check) => check.command).join(', ')}`)
         const pushed = await git.commitAndPush({
           repo: component.repository,
           dir,
@@ -62,6 +84,8 @@ export function createImplementService({ components = [], git, runner, baseDir, 
           implementationCommit: pushed.sha,
           compareUrl: pushed.compareUrl,
           runner: { steps: result.usage?.steps, tokens: result.usage?.totalTokens },
+          checks: (checks.checks ?? []).map((check) => ({ command: check.command, exitCode: check.exitCode })),
+          repairs,
         })
         logger?.info?.('request implemented', { requestId, changeId: component.changeId, branch })
       }

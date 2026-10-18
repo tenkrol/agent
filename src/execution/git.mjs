@@ -66,10 +66,27 @@ export function createGitHubClient({ keyDir = '/etc/agent/github', timeoutMs = G
       }
       if (Object.keys(files).length > 0) await runGit(['add', '--', ...Object.keys(files)], { cwd: dir, keyPath: key, timeoutMs })
       else await runGit(['add', '-A'], { cwd: dir, keyPath: key, timeoutMs })
-      await runGit(['-c', 'user.name=tenkrol-agent', '-c', 'user.email=agent@tenkrol.local', 'commit', '-m', String(message)], { cwd: dir, keyPath: key, timeoutMs })
+      try {
+        await runGit(['-c', 'user.name=tenkrol-agent', '-c', 'user.email=agent@tenkrol.local', 'commit', '-m', String(message)], { cwd: dir, keyPath: key, timeoutMs })
+      } catch (error) {
+        // DSH мог уже закоммитить изменения сам: пустой коммит — не ошибка.
+        const status = await runGit(['status', '--porcelain'], { cwd: dir, timeoutMs })
+        if (status.stdout !== '') throw error
+      }
       await runGit(['push', '-u', 'origin', branch], { cwd: dir, keyPath: key, timeoutMs })
       const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })
       return { sha: stdout, compareUrl: `https://github.com/${repo}/compare/main...${branch}` }
+    },
+
+    /** Слить ветку в target (обычно main) и запушить. */
+    async mergeAndPush({ repo, dir, branch, target = 'main', message, keyPath } = {}) {
+      const key = keyPath ?? keyFor(repo)
+      await runGit(['checkout', target], { cwd: dir, keyPath: key, timeoutMs })
+      await runGit(['pull', '--ff-only', 'origin', target], { cwd: dir, keyPath: key, timeoutMs })
+      await runGit(['-c', 'user.name=tenkrol-agent', '-c', 'user.email=agent@tenkrol.local', 'merge', '--no-ff', branch, '-m', String(message ?? `merge ${branch}`)], { cwd: dir, keyPath: key, timeoutMs })
+      await runGit(['push', 'origin', target], { cwd: dir, keyPath: key, timeoutMs })
+      const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })
+      return { sha: stdout, target }
     },
 
     /** Создать PR без API нельзя; возвращаем ссылку на сравнение. */
