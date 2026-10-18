@@ -84,6 +84,15 @@ export function toProviderUsage(usage = {}) {
   }
 }
 
+/** E9: выбрать исполнителя по тексту задачи; явный id не переопределяется. */
+export function chooseExecutorId({ task = '', executorId = 'dsh' } = {}) {
+  if (executorId !== 'dsh') return executorId
+  const text = String(task)
+  if (/(сервер|монитор|наблюд|диск|памят|процесс|журнал|алерт|alert|health|метрик|uptime|нагрузк)/i.test(text)) return 'monitor'
+  if (/(docx|xlsx|pptx|pdf|файл|документ|таблиц|презентац|архив|картин|изображен)/i.test(text)) return 'files'
+  return 'dsh'
+}
+
 /** Task words that mean real work: a plan is worth approving before the run. */
 export const PLAN_SIGNALS = [
   'отчёт', 'отчет', 'презентац', 'исследован', 'проанализируй', 'собери', 'сайт',
@@ -154,6 +163,16 @@ export class AgentBot {
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.files?.model ?? config.model?.name,
         }),
+        createDshExecutor({
+          id: 'monitor',
+          capabilities: ['monitor', 'host', 'alerts'],
+          taskPrefix: 'Ты агент-наблюдатель: проверяешь состояние хоста и сервисов, метрики, '
+            + 'диски/память/процессы, журналы и алерты. Не меняй систему без явной просьбы; '
+            + 'опирайся на deploy/agent-metrics, /observe и alert-скрипты.\n\n',
+          runner: { run: (request) => this.runner.run(request) },
+          limits: config.limits ?? {},
+          modelProfile: config.agentProfiles?.monitor?.model ?? config.model?.name,
+        }),
         {
           id: 'quick',
           capabilities: ['quick'],
@@ -171,9 +190,7 @@ export class AgentBot {
           },
         },
       ],
-      selectExecutor: ({ task, executorId }) => executorId !== 'dsh'
-        ? executorId
-        : /(docx|xlsx|pptx|pdf|файл|документ|таблиц|презентац|архив|картин|изображен)/i.test(String(task ?? '')) ? 'files' : 'dsh',
+      selectExecutor: ({ task, executorId }) => chooseExecutorId({ task, executorId }),
       verifier,
       limits: {
         tokenLimit: config.limits.taskTokenBudget,
