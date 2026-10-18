@@ -223,7 +223,14 @@ export class AgentBot {
   async recoverAcceptedOutbox() {
     if (!this.queueStore || !this.delivery?.enqueue) return
     for (const row of this.queueStore.pendingOutbox()) {
-      await this.delivery.enqueue(row.payload.event)
+      const payload = row.payload
+      if (payload?.kind === 'personal') {
+        await this.safeSend(payload.chatId, payload.text, { replyToMessageId: payload.replyToMessageId })
+      } else if (payload?.event) {
+        await this.delivery.enqueue(payload.event)
+      } else {
+        continue
+      }
       this.queueStore.markOutboxEnqueued(row.event_id)
       this.logger?.info('accepted outbox re-enqueued', { eventId: row.event_id, taskId: row.task_id })
     }
@@ -2975,7 +2982,19 @@ export class AgentBot {
     if (safeText !== text) this.logger?.warn('secret redacted from report', { taskId: job.id })
     // Личный путь тоже фиксирует принятие до отправки; outbox для него пока не
     // создаётся отдельно — доставка идёт напрямую, ограничение зафиксировано.
-    const personalAccepted = leaseContext.accept?.({ status: status ?? 'done', payload: { summary: { text: safeText, files: [] }, resultFiles: [] }, outbox: null })
+    const personalOutbox = {
+      eventId: `personal:${job.id}:${job.resultVersion ?? 1}`,
+      kind: 'personal',
+      taskId: job.id,
+      chatId: job.chatId,
+      text: safeText,
+      replyToMessageId: this.jobReplyTo(job),
+    }
+    const personalAccepted = leaseContext.accept?.({
+      status: status ?? 'done',
+      payload: { summary: { text: safeText, files: [] }, resultFiles: [] },
+      outbox: personalOutbox,
+    })
     if (personalAccepted && personalAccepted.ok === false && personalAccepted.unsupported !== true) return
     await this.markStatus({
       chatId: job.chatId,

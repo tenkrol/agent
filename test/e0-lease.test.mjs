@@ -76,3 +76,21 @@ test('accepted outbox is re-enqueued after a crash before delivery', async () =>
     await env.close()
   }
 })
+
+test('a personal result accepted before delivery is re-sent from the outbox', async () => {
+  const env = await createBotHarness({ runner: { async run() { return { ok: true, text: 'x', usage: { totalTokens: 1, steps: 1 } } } } })
+  try {
+    env.bot.queueStore = {
+      pendingOutbox: () => [{
+        event_id: 'personal:t1:1',
+        task_id: 't1',
+        payload: { kind: 'personal', chatId: 42, text: 'готово', replyToMessageId: undefined },
+      }],
+      markOutboxEnqueued: () => {},
+    }
+    await env.bot.recoverAcceptedOutbox()
+    assert.ok(env.platform.sent.some((entry) => /готово/.test(entry.markdown)))
+  } finally {
+    await env.close()
+  }
+})
