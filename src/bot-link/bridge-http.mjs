@@ -113,6 +113,9 @@ export class BridgeServer {
     onInitiatives,
     initiativeList,
     onInitiativeDecide,
+    policyStatus,
+    onPolicy,
+    onBenefit,
     onImplement,
     onDeploy,
     activity,
@@ -147,6 +150,9 @@ export class BridgeServer {
     this.onInitiatives = onInitiatives
     this.initiativeList = initiativeList
     this.onInitiativeDecide = onInitiativeDecide
+    this.policyStatus = policyStatus
+    this.onPolicy = onPolicy
+    this.onBenefit = onBenefit
     this.onImplement = onImplement
     this.onDeploy = onDeploy
     this.activity = activity
@@ -210,7 +216,7 @@ export class BridgeServer {
     const known = pathname === '/bridge' || pathname === '/v1/files' || pathname.startsWith('/v1/files/')
       || pathname === '/v1/tasks' || pathname.startsWith('/v1/tasks/') || pathname === '/v1/capabilities'
       || pathname === '/v1/agents' || pathname === '/v1/activity' || pathname === '/v1/usage'
-      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/specify' || pathname === '/v1/poll' || pathname === '/v1/poll/status' || pathname === '/v1/observers' || pathname === '/v1/observe' || pathname === '/v1/review' || pathname === '/v1/shadow' || pathname === '/v1/initiatives' || pathname === '/v1/initiatives/decide' || pathname === '/v1/implement' || pathname === '/v1/deploy'
+      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/specify' || pathname === '/v1/poll' || pathname === '/v1/poll/status' || pathname === '/v1/observers' || pathname === '/v1/observe' || pathname === '/v1/review' || pathname === '/v1/shadow' || pathname === '/v1/initiatives' || pathname === '/v1/initiatives/decide' || pathname === '/v1/policy' || pathname === '/v1/policy/cancel' || pathname === '/v1/benefit' || pathname === '/v1/implement' || pathname === '/v1/deploy'
     if (!known) {
       send(404, { ok: false, error: 'not found' })
       return
@@ -251,6 +257,20 @@ export class BridgeServer {
       }
       if (request.method === 'GET' && pathname === '/v1/observers') {
         return send(200, { ok: true, sources: this.observers?.() ?? [] })
+      }
+      if (request.method === 'GET' && pathname === '/v1/policy') {
+        return send(200, { ok: true, policy: this.policyStatus?.() ?? {} })
+      }
+      if (request.method === 'POST' && pathname === '/v1/policy/cancel') {
+        return send(200, { ok: true, policy: this.onPolicy?.({ cancel: true }) ?? {} })
+      }
+      if (request.method === 'POST' && pathname === '/v1/policy') {
+        const payload = await this.#json(request)
+        return send(200, { ok: true, policy: this.onPolicy?.(payload ?? {}) ?? {} })
+      }
+      if (request.method === 'POST' && pathname === '/v1/benefit') {
+        const payload = await this.#json(request)
+        return send(200, { ok: true, ...this.onBenefit?.(payload ?? {} ) ?? {} })
       }
       if (request.method === 'GET' && pathname === '/v1/shadow') {
         return send(200, { ok: true, stats: await this.shadowStats?.() ?? {} })

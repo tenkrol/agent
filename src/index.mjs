@@ -43,6 +43,8 @@ import { createObserverRegistry, createGithubSource, createServerSource } from '
 import { createReviewService } from './workflow/review.mjs'
 import { createShadowStore } from './workflow/shadow.mjs'
 import { createInitiativeService } from './workflow/initiatives.mjs'
+import { createActionPolicy } from './workflow/action-policy.mjs'
+import { evaluateBenefit } from './workflow/benefit.mjs'
 import os from 'node:os'
 import { createDeployService } from './workflow/deploy.mjs'
 import { createGitHubClient } from './execution/git.mjs'
@@ -411,6 +413,8 @@ async function main() {
     logger,
   })
 
+  const actionPolicy = createActionPolicy({ mode: 'observe', enabled: false, allowlist: [], approvalRequired: true })
+
   const requestPoller = createRequestPoller({
     git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
     repo: config.spec.repo,
@@ -456,6 +460,14 @@ async function main() {
       onInitiatives: (suggestions) => initiativeService.propose(suggestions),
       initiativeList: () => initiativeService.list(),
       onInitiativeDecide: (id, decision) => initiativeService.decide(id, decision),
+      policyStatus: () => actionPolicy.status(),
+      onPolicy: (body) => {
+        if (body?.cancel) { actionPolicy.cancel(); return actionPolicy.status() }
+        if (body?.mode) actionPolicy.setMode(String(body.mode))
+        if (body?.enabled !== undefined) actionPolicy.setEnabled(Boolean(body.enabled))
+        return actionPolicy.status()
+      },
+      onBenefit: (body) => evaluateBenefit(body ?? {}),
       onSpecify: (body) => specifyService.specify({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,
