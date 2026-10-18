@@ -110,7 +110,7 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
       budget.consume(result.usage, { unknown: true })
     }
     budget.consume(result?.usage ?? {}, { unknown: !result?.usage || result.usage.totalTokens === undefined })
-    onUsage(result?.usage, { stage: STAGE.executing })
+    onUsage(result?.usage, { stage: STAGE.executing, executorId: chosenId })
     if (parentAborted()) {
       result = abortedResult(result)
       stage(STAGE.cancelled)
@@ -141,7 +141,7 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
         const value = await verify({ result, signal: verifySignal, budget: budget.snapshot() })
         if (value?.usage) {
           budget.consume(value.usage, { unknown: value.usage.totalTokens === undefined })
-          onUsage(value.usage, { stage: STAGE.verifying, unknown: value.usage.totalTokens === undefined })
+          onUsage(value.usage, { stage: STAGE.verifying, executorId: chosenId, unknown: value.usage.totalTokens === undefined })
         }
         if (budget.exhausted()) budgetBlocked = true
         return value
@@ -184,11 +184,11 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
       } catch (error) {
         logger?.warn?.('repair executor failed', { error: error?.message ?? error })
         budget.consume(EMPTY_USAGE(), { unknown: true })
-        onUsage(EMPTY_USAGE(), { stage: STAGE.repairing, unknown: true })
+        onUsage(EMPTY_USAGE(), { stage: STAGE.repairing, executorId: chosenId, unknown: true })
         break
       }
       budget.consume(repair?.usage ?? {}, { unknown: !repair?.usage || repair.usage.totalTokens === undefined })
-      onUsage(repair?.usage, { stage: STAGE.repairing })
+      onUsage(repair?.usage, { stage: STAGE.repairing, executorId: chosenId })
       if (parentAborted()) {
         result = abortedResult(repair)
         stage(STAGE.cancelled)
