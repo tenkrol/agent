@@ -481,3 +481,14 @@ taskId/agent/stage/status/tokens и отдавать последние собы
 - GIVEN задача завершилась
 - WHEN пишется событие completed
 - THEN оно доступно в recent() и не содержит секретов.
+
+## ADDED Requirements
+
+### Requirement: Фактическая модель в usage
+Событие расхода ДОЛЖНО содержать фактический provider/model, роль и task/attempt id;
+неизвестный расход не считается нулевым.
+
+#### Scenario: model_usage
+- GIVEN выполняется задача personal
+- WHEN пишется model_usage
+- THEN событие содержит role=personal, provider/model и taskId.

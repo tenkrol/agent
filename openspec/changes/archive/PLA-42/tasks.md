@@ -3,4 +3,4 @@
 - [x] 2. очередь kind=implement
 - [x] 3. идемпотентность/отмена
 - [x] 4. API poll
-- [ ] 5. commit/push/деплой
+- [x] 5. commit/push/деплой

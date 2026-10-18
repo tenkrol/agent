@@ -159,3 +159,115 @@ changeId, base/specification SHA, зависимости и политики; м
 - WHEN SHA меняется на B
 - THEN прежнее подтверждение не действует автоматически
 - AND нужна новая проверка/подтверждение.
+
+## ADDED Requirements
+
+### Requirement: Реализация только согласованной ревизии
+DSH ДОЛЖЕН запускаться только для заявки с approval, совпадающим по revision и
+точным SHA компонентных спецификаций; checkout выполняется на этом SHA.
+
+#### Scenario: Черновик
+- GIVEN заявка draft без approval
+- WHEN вызывается implement
+- THEN DSH не запускается.
+
+#### Scenario: Спека изменилась
+- GIVEN SHA спецификации изменён после approval
+- WHEN вызывается implement
+- THEN запуск отклоняется.
+
+## ADDED Requirements
+
+### Requirement: Публикуется проверенный результат слияния
+В main ДОЛЖЕН попадать только commit, полученный слиянием проверенного implementation
+SHA с актуальным main и прошедший проверки именно в этом результате.
+
+#### Scenario: Проверки слияния красные
+- GIVEN тесты integration checkout падают
+- WHEN deploy завершается
+- THEN main не меняется.
+
+#### Scenario: Чужая ветка
+- GIVEN branch не совпадает с веткой verified-результата
+- WHEN вызывается deploy
+- THEN выпуск отклоняется.
+
+## ADDED Requirements
+
+### Requirement: Почасовой подбор ready-заявок
+Система ДОЛЖНА раз в час детерминированно находить approved/ready заявки и ставить
+реализацию в очередь; повторный опрос не создаёт вторую попытку без retry.
+
+#### Scenario: Повторный опрос
+- GIVEN заявка уже в очереди/выполнена
+- WHEN poller снова её видит
+- THEN дубликат не создаётся.
+
+### Requirement: Устойчивость операции
+Операция реализации ДОЛЖНА использовать очередь, аренду и отмену; потеря аренды
+останавливает реализацию.
+
+#### Scenario: Отмена
+- GIVEN реализация выполняется
+- WHEN заявку отменяют
+- THEN signal отменяется и статус не done.
+
+## ADDED Requirements
+
+### Requirement: Установка не выдаётся за merge
+Deploy ДОЛЖЕН отдельно сообщать merged/checked/published SHA и installed.state;
+неудачный healthcheck откатывается и не становится healthy.
+
+#### Scenario: Healthcheck failed
+- GIVEN install вернул healthy=false
+- WHEN deploy завершается
+- THEN rollback вызван
+- AND состояние rolled_back, ok=false.
+
+## ADDED Requirements
+
+### Requirement: Ready-спецификация до согласования
+Согласование ДОЛЖНО быть возможно только после DSH-исследования кода и готовой
+спецификации с критериями; draft не согласуется.
+
+#### Scenario: Draft approval
+- GIVEN status draft
+- WHEN вызывается approve
+- THEN согласование отклоняется.
+
+#### Scenario: Specify
+- GIVEN draft с компонентами
+- WHEN вызывается specify
+- THEN DSH заполняет спеку в spec-ветке
+- AND status становится ready с новыми SHA.
+
+## ADDED Requirements
+
+### Requirement: Контрольная строка `Acceptance E2E smoke` в README
+`README.md` в корне репозитория ДОЛЖЕН содержать отдельную строку, начинающуюся с
+`Acceptance E2E smoke`, чтобы результат сквозной приёмки REQ-0010 был проверяем по
+документации и не терялся при правках.
+
+#### Scenario: Строка присутствует
+- GIVEN в README есть раздел «Тесты и разработка»
+- WHEN реализация PLA-51 завершена и запускается `test/readme.test.mjs`
+- THEN в README есть строка, начинающаяся с `Acceptance E2E smoke`
+- AND тест наличия строки проходит.
+
+#### Scenario: Строку удалили или переименовали
+- GIVEN контрольная строка удалена, переименована или спрятана в середину другой строки
+- WHEN запускается `test/readme.test.mjs`
+- THEN тест падает с сообщением об отсутствии `Acceptance E2E smoke`
+- AND приёмка PLA-51 не считается пройденной.
+
+#### Scenario: Существующая отметка E5 не потеряна
+- GIVEN в README уже есть строка `E5 implementation check`
+- WHEN добавляется новая контрольная строка
+- THEN строка E5 остаётся на месте
+- AND оба теста `test/readme.test.mjs` проходят.
+
+#### Scenario: Изменение не трогает код продукта
+- GIVEN реализация PLA-51 завершена
+- WHEN проверяется diff
+- THEN изменены README, тесты и документы процесса
+- AND код продукта, API, конфигурация, состояние и секреты не менялись.

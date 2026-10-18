@@ -3,4 +3,4 @@
 - [x] 2. GitHub/серверные источники
 - [x] 3. API наблюдения
 - [x] 4. тесты
-- [ ] 5. commit/push
+- [x] 5. commit/push
