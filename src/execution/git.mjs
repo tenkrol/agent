@@ -78,6 +78,24 @@ export function createGitHubClient({ keyDir = '/etc/agent/github', timeoutMs = G
       return { sha: stdout, compareUrl: `https://github.com/${repo}/compare/main...${branch}` }
     },
 
+    /** Список refs по шаблону (например, refs/remotes/origin/req/*). */
+    async refs({ dir, pattern = 'refs/remotes/origin/req/*' } = {}) {
+      const { stdout } = await runGit(['for-each-ref', '--format=%(refname:short)', pattern], { cwd: dir, timeoutMs })
+      return stdout === '' ? [] : stdout.split('\n')
+    },
+
+    /** Прочитать файл из ref без checkout. */
+    async show({ dir, ref, path: file } = {}) {
+      const { stdout } = await runGit(['show', `${ref}:${file}`], { cwd: dir, timeoutMs })
+      return stdout
+    },
+
+    /** Обновить remote refs заявок. */
+    async fetchRequests({ repo, dir, keyPath } = {}) {
+      const key = keyPath ?? keyFor(repo)
+      await runGit(['fetch', 'origin', '+refs/heads/req/*:refs/remotes/origin/req/*'], { cwd: dir, keyPath: key, timeoutMs })
+    },
+
     /** Текущий HEAD рабочей копии. */
     async head({ dir } = {}) {
       const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })

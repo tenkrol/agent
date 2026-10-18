@@ -37,6 +37,7 @@ import { createVerifyPorts } from './verification/ports.mjs'
 import { createRequestService } from './workflow/request-service.mjs'
 import { createComponentSpecService } from './workflow/component-specs.mjs'
 import { createImplementService } from './workflow/implement.mjs'
+import { createRequestPoller } from './workflow/request-poller.mjs'
 import { createDeployService } from './workflow/deploy.mjs'
 import { createGitHubClient } from './execution/git.mjs'
 import { ProceduresStore } from './storage/procedures.mjs'
@@ -357,9 +358,26 @@ async function main() {
     disk,
     logger,
     instructionsPath: path.join(projectDir, 'deploy', 'workspace', 'AGENTS.md.template'),
+    implementer: (input) => implementService.implement({
+      requestId: input.requestId,
+      retry: input.retry,
+      signal: input.signal,
+      specRepo: config.spec.repo,
+      specDir: config.spec.dir,
+      keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
+    }),
   })
 
   delivery.onFailed = (record, error) => bot.notifyDeliveryFailure(record, error)
+
+  const requestPoller = createRequestPoller({
+    git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
+    repo: config.spec.repo,
+    dir: config.spec.dir,
+    keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
+    onReady: (request) => bot.enqueueImplementation(request),
+    logger,
+  })
 
   // The bridge is a loopback listener reached through an SSH tunnel from Spain.
   const bridgeEnabled = config.bridge.http && Boolean(config.bridge.token)
@@ -387,6 +405,8 @@ async function main() {
       activity: (query) => bot.activity?.recent?.(query) ?? [],
       usage: () => bot.usageSnapshot?.() ?? {},
       onCreateRequest: (body) => requestService.create(body),
+      onPoll: () => requestPoller.scan(),
+      pollStatus: () => requestPoller.status(),
       onApprove: (body) => requestService.approve({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,
@@ -430,6 +450,7 @@ async function main() {
   process.on('unhandledRejection', (reason) => logger.error('unhandled rejection', { error: reason }))
 
   await bot.start()
+  requestPoller.start()
   await bridge?.start()
   process.on('exit', () => { void bridge?.stop() })
   try {

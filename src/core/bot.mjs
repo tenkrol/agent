@@ -141,10 +141,11 @@ export class AgentBot {
    * @param {string} [options.instructionsPath] - `AGENTS.md` template to install.
    * @param {() => Date} [options.now] - clock, injected by tests.
    */
-  constructor({ config, platform, runner, orchestrator, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, now = () => new Date() }) {
+  constructor({ config, platform, runner, orchestrator, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, implementer, now = () => new Date() }) {
     this.config = config
     this.platform = platform
     this.runner = runner
+    this.implementer = implementer
     // Оркестратор — единственный владелец цикла исполнение → проверка → исправление.
     this.orchestrator = orchestrator ?? createOrchestrator({
       // Адаптер читает this.runner на каждом запуске: тесты и переключение
@@ -2457,12 +2458,53 @@ export class AgentBot {
     })
   }
 
+  /** G1: реализация заявки как устойчивая операция очереди. */
+  async executeImplementJob(job, leaseContext = {}) {
+    const stale = () => Boolean(leaseContext.leaseSignal?.aborted || (leaseContext.owns && !leaseContext.owns()))
+    if (!this.implementer) { await this.failTask(job.id, { reason: 'implementer', error: 'исполнитель заявок не настроен' }); return }
+    const controller = new AbortController()
+    leaseContext.leaseSignal?.addEventListener?.('abort', () => controller.abort(), { once: true })
+    await this.lifecycle.beginTask(job.id, { reason: 'implementation' })
+    this.lifecycle.begin({ id: job.id, chatId: job.chatId, controller, startedAt: this.now().getTime(), attemptId: `${job.id}-1` })
+    try {
+      const result = await this.implementer({ requestId: job.requestId, retry: Boolean(job.retry), signal: controller.signal })
+      if (stale()) return
+      await this.lifecycle.finishTask(job.id, { status: STATUS.done, reason: 'implemented' })
+      this.activity?.record?.({ type: 'implemented', taskId: job.id, requestId: job.requestId, state: result?.state, revision: job.revision })
+      if (job.chatId !== undefined) await this.safeSend(job.chatId, `✅ Заявка ${job.requestId}: реализация опубликована (${(result?.results ?? []).map((item) => item.branch).join(', ')})`)
+    } catch (error) {
+      this.logger?.warn?.('implementation job failed', { taskId: job.id, requestId: job.requestId, error: String(error?.message ?? error) })
+      await this.failTask(job.id, { reason: 'implement', error: String(error?.message ?? error).slice(0, 300) })
+      if (job.chatId !== undefined) await this.safeSend(job.chatId, `❌ Заявка ${job.requestId}: реализация не удалась — ${String(error?.message ?? error).slice(0, 300)}`)
+    }
+  }
+
+  /** Поставить готовую заявку в существующую очередь; идемпотентно по requestId+revision. */
+  async enqueueImplementation({ requestId, revision, retry = false } = {}) {
+    const chatId = this.alertChatId()
+    if (chatId === undefined) throw new Error('не настроен чат владельца')
+    const suffix = retry ? `:retry:${this.now().getTime()}` : ''
+    return this.enqueueJob({
+      id: `impl-${requestId}-r${revision}${retry ? `-${this.now().getTime()}` : ''}`,
+      kind: 'implement',
+      requestId,
+      revision,
+      retry,
+      chatId,
+      userId: chatId,
+      text: `Реализация заявки ${requestId} (r${revision})`,
+      attachments: [],
+      requestKey: `implement:${requestId}:r${revision}${suffix}`,
+    })
+  }
+
   // ─── one task ─────────────────────────────────────────────────────────────
 
   /** One task: intake, DSH run, usage, files, answer — or a parked question. */
   async executeTask(job, leaseContext = {}) {
     const stale = () => Boolean(leaseContext.leaseSignal?.aborted || (leaseContext.owns && !leaseContext.owns()))
     if (stale()) return
+    if (job.kind === 'implement') return this.executeImplementJob(job, leaseContext)
     const dir = await prepareTaskWorkspace(this.config.workspace.dir, job.id, { perTask: this.config.workspace.perTask })
     const timeZone = this.config.runtime.timeZone
 
