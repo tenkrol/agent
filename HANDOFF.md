@@ -1154,3 +1154,19 @@ Merge/деплой PLA-23 не выполнялись.
 - Тесты: 443 зелёных (полный прогон `--test-concurrency=1`; обычный параллельный
   прогон один раз завис на тестах, каждый файл отдельно зелёный).
 - PLA-20 остаётся открытым: изоляция workspace для workers>1.
+
+## 2026-10-18: PLA-20 закрыт — SQLite + workers=2 с изоляцией workspace
+
+- `main` = `2038191` (+ архив/доки); production release `release-20261018-073743`,
+  `QUEUE_STORE=sqlite`, `QUEUE_WORKERS=2`, `WORKSPACE_PER_TASK=true`, сервис active.
+- Per-task workspace: `tasks/<id>/` с inbox/outbox/AGENTS.md; runner получает
+  `workspaceDir` на запуск; вложения/файлы/проверка — в папке задачи.
+- `QUEUE_WORKERS>1` допускается только с `WORKSPACE_PER_TASK=true`.
+- Живой параллельный прогон: `074004-jc3` и `074004-jc4` стартовали одновременно,
+  обе `done`/проверка passed; файлы лежат раздельно:
+  `tasks/074004-jc3/outbox/iso1.xlsx`, `tasks/074004-jc4/outbox/iso2.xlsx` —
+  перемешивания нет (в отличие от `230750-*` до изоляции).
+- По ходу исправлен переход `verifying → awaiting_owner`: вопрос после проверки
+  больше не роняет задачу.
+- Тесты: 446 зелёных (полный прогон `--test-concurrency=1`). Дельты storage/execution
+  влиты, PLA-20 в архиве; активных изменений нет.
