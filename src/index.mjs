@@ -418,7 +418,7 @@ async function main() {
   const requestPoller = createRequestPoller({
     git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
     repo: config.spec.repo,
-    dir: config.spec.dir,
+    dir: `${config.spec.dir}-poll`,
     keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
     onReady: (request) => bot.enqueueImplementation(request),
     logger,
@@ -471,13 +471,13 @@ async function main() {
       onSpecify: (body) => specifyService.specify({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,
-        specDir: config.spec.dir,
+        specDir: `${config.spec.dir}-spec`,
         keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
       }),
       onApprove: (body) => requestService.approve({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,
-        specDir: config.spec.dir,
+        specDir: `${config.spec.dir}-approve`,
         keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
       }),
       onDeploy: (body) => deployService.deploy({
@@ -485,11 +485,14 @@ async function main() {
         component: String(body.component),
         branch: String(body.branch),
         confirm: body.confirm,
+        specRepo: config.spec.repo,
+        specDir: `${config.spec.dir}-deploy`,
+        keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
       }),
       onImplement: (body) => implementService.implement({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,
-        specDir: config.spec.dir,
+        specDir: `${config.spec.dir}-impl`,
         keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
       }),
       onSubmitV2: (request) => bot.submitV2Task(request),

@@ -2484,7 +2484,7 @@ export class AgentBot {
     const chatId = this.alertChatId()
     if (chatId === undefined) throw new Error('не настроен чат владельца')
     const suffix = retry ? `:retry:${this.now().getTime()}` : ''
-    return this.enqueueJob({
+    const outcome = await this.enqueueJob({
       id: `impl-${requestId}-r${revision}${retry ? `-${this.now().getTime()}` : ''}`,
       kind: 'implement',
       requestId,
@@ -2496,6 +2496,15 @@ export class AgentBot {
       attachments: [],
       requestKey: `implement:${requestId}:r${revision}${suffix}`,
     })
+    // Failed/cancelled attempt is retryable: same idempotency key must not block a
+    // new managed attempt.
+    if (outcome?.duplicate && !retry) {
+      const existing = this.journal?.get?.(outcome.taskId)
+      if (existing && ['failed', 'cancelled', 'interrupted'].includes(existing.status)) {
+        return this.enqueueImplementation({ requestId, revision, retry: true })
+      }
+    }
+    return outcome
   }
 
   // ─── one task ─────────────────────────────────────────────────────────────

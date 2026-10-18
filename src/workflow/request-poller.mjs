@@ -12,8 +12,9 @@ import { approvalProblems, manifestProblems, REQUEST_STATES } from './request-st
 export function createRequestPoller({ git, repo, dir, keyPath, intervalMs = 3_600_000, onReady, logger, now = () => Date.now() } = {}) {
   const state = { nextPollAt: undefined, lastPollAt: undefined, lastError: undefined, lastFound: 0, lastEnqueued: 0, lastResults: [] }
   let timer
+  let inFlight
 
-  async function scan() {
+  async function scanOnce() {
     state.lastPollAt = now()
     try {
       await git.clone({ repo, dir, branch: 'main', keyPath, fresh: true })
@@ -56,6 +57,12 @@ export function createRequestPoller({ git, repo, dir, keyPath, intervalMs = 3_60
       logger?.warn?.('request poll failed', { error })
       throw error
     }
+  }
+
+  async function scan() {
+    if (inFlight) return inFlight
+    inFlight = scanOnce().finally(() => { inFlight = undefined })
+    return inFlight
   }
 
   return {
