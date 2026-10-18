@@ -213,15 +213,6 @@ async function main() {
 
   /** @type {AgentBot} */
   let bot
-  const implementService = createImplementService({
-    components: config.spec.components,
-    git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
-    runner,
-    baseDir: config.spec.implementDir,
-    timeoutMs: config.task.timeoutMs,
-    logger,
-  })
-
   const cgroupLimiter = config.task.cgroup
     ? new CgroupLimiter({
       memoryMaxBytes: config.task.memoryMaxBytes,
@@ -244,6 +235,15 @@ async function main() {
     logger,
     cgroup: cgroupLimiter,
     onEvent: (event) => bot?.onDshEvent(event),
+  })
+
+  const implementService = createImplementService({
+    components: config.spec.components,
+    git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
+    runner,
+    baseDir: config.spec.implementDir,
+    timeoutMs: config.task.timeoutMs,
+    logger,
   })
 
   const vision = new VisionClient({
