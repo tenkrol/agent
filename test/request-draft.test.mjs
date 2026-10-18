@@ -60,6 +60,7 @@ test('request service writes a draft and publishes a branch', async () => {
     const result = await service.create({ text: 'Добавь версию агента', title: 'Версия' })
     assert.equal(result.requestId, 'REQ-0002')
     assert.equal(result.branch, 'req/REQ-0002')
+    assert.equal(result.analysis.components[0].repository, 'tenkrol/agent')
     assert.equal(calls.length, 1)
     assert.match(await fs.readFile(path.join(repoDir, 'requests', 'REQ-0002', 'manifest.json'), 'utf8'), /REQ-0002/)
   } finally {
