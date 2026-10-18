@@ -19,6 +19,9 @@
 - `test/readme.test.mjs` дополняется проверкой: README содержит строку, начинающуюся
   с `Acceptance E2E smoke`; при удалении или переименовании строки проверка падает;
 - существующая строка `E5 implementation check` и её тест сохраняются без изменений;
+- проверки расхода в `test/plan.test.mjs` и `test/quick.test.mjs` используют тот же
+  часовой пояс, что и бот, поэтому полный прогон не зависит от границы суток
+  UTC/`Europe/Moscow`;
 - поведение агента, HTTP-API, конфигурация, состояние и секреты не меняются.
 
 ## Чего не делаем
@@ -37,6 +40,7 @@
 - `node --test --test-force-exit test/readme.test.mjs` — оба теста (E5 и новый) зелёные.
 - `bash tools/spec-check.sh` — структура изменения и дельта-спеки в порядке.
 - `grep -n '^Acceptance E2E smoke' README.md` находит контрольную строку.
-- Полный прогон `node --test --test-force-exit test/*.test.mjs` не содержит регрессий.
+- Полный прогон `node --test --test-force-exit test/*.test.mjs` зелёный, включая
+  проверки расхода в `plan.test.mjs` и `quick.test.mjs`.
 - Успех: README содержит строку `Acceptance E2E smoke`, тест защищает её от потери,
   остальное поведение продукта не изменилось.

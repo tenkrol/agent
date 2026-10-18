@@ -125,7 +125,8 @@ test('the bot answers a trivial request itself and records the spend', async () 
     assert.ok(record.usd > 0, 'расход записан в деньги')
     assert.ok(env.platform.sent.some((entry) => /408/.test(entry.markdown)), 'ответ дошёл')
     assert.ok(env.platform.sent.some((entry) => /без запуска задачи/.test(entry.markdown)))
-    assert.equal(env.usage.tokens(env.now ?? new Date(), 'Europe/Moscow') > 0, true, 'день учёл вызов')
+    // Тот же пояс, что у бота: иначе на границе суток запись и проверка расходятся.
+    assert.equal(env.usage.tokens(new Date(), env.config.runtime.timeZone) > 0, true, 'день учёл вызов')
   } finally {
     await env.close()
   }
