@@ -29,3 +29,4 @@
 | `PLA-23` | SQLite fencing: requeue с payload/generation, cancelAll, owner/lease/status в complete, восстановление до TTL, программный запрет workers>1 |
 | `PLA-20` | Этап 2: SQLite-очередь с арендами/поколениями, fencing, восстановление до TTL и после краха, изоляция workspace на задачу, workers=2 |
 | `PLA-24` | E0: остановка по потере аренды, атомарное принятие результата/outbox, stale-защита, сверка и восстановление SQLite↔JSONL |
+| `PLA-25` | E1: реестр агентов с метаданными, fresh session на per-task запуск, retention tasks, лимит задач пользователя |

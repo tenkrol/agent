@@ -1184,3 +1184,11 @@ Merge/деплой PLA-23 не выполнялись.
 - Живая проверка: `080447-bh7` и `080821-da1` → done/passed; исправлен путь
   Яндекс.Диска к файлу в per-task workspace (uploadToDisk использовал общий dir).
 - Тесты: 459. E0 считается закрытым; следующие этапы — E1/E2.
+
+## 2026-10-18: PLA-25 / E1 закрыт
+
+- `main` = `9a9a22c`, release `release-20261018-081716`, сервис active.
+- Реестр `describe()`: id/capabilities/limits/modelProfile/tools/status.
+- Per-task workspace → fresh DSH session; continuation сохраняет сессию.
+- Retention `tasks/<id>`; `TASK_PER_USER_CONCURRENCY`.
+- Тесты: 463. Дельты влиты, PLA-25 в архиве.
