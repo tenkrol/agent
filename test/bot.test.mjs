@@ -4,7 +4,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { createBotHarness } from './helpers.mjs'
 
-const OK_USAGE = { inputTokens: 120, outputTokens: 30, cacheReadTokens: 10, cacheWriteTokens: 0, totalTokens: 160, steps: 1, turns: 1 }
+const OK_USAGE = { inputTokens: 120, outputTokens: 30, cacheReadTokens: 10, cacheWriteTokens: 0, totalTokens: 150, steps: 1, turns: 1 }
 
 const okResult = (over = {}) => ({
   ok: true,
@@ -86,7 +86,7 @@ test('a task runs, the answer and the file go out, usage is recorded', async () 
     assert.equal(env.platform.documents.length, 1)
     assert.match(env.platform.documents[0].caption, /отчёт\.docx/)
     assert.ok(env.platform.sent.some((entry) => /Готово/.test(entry.markdown)))
-    assert.equal(env.usage.tokens(), 160)
+    assert.equal(env.usage.tokens(), 150)
     assert.equal(env.state.get('session:42'), 'session-stub-1')
     assert.equal(env.platform.edits.length, 0, 'brief: ни «приступаю», ни прогресса, ни «выполнена»')
   } finally {
