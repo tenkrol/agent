@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { analyzeRequest } from '../src/workflow/analyze.mjs'
+import { analyzeRequest, draftSpecs } from '../src/workflow/analyze.mjs'
 
 test('assistant-only and agent-only requests map to one component', () => {
   assert.deepEqual(analyzeRequest('Добавь кнопку в боте').components.map((item) => item.repository), ['tenkrol/assistant'])
@@ -17,4 +17,12 @@ test('an unclear request asks the owner', () => {
   const result = analyzeRequest('Сделай лучше')
   assert.equal(result.ambiguous, true)
   assert.match(result.question, /компонент/)
+})
+
+
+test('draftSpecs prepares per-component OpenSpec skeletons', () => {
+  const analysis = analyzeRequest('Бот должен показывать релиз агента')
+  const specs = draftSpecs(analysis, 'Бот должен показывать релиз агента')
+  assert.equal(specs.length, 2)
+  assert.ok(specs.every((spec) => spec.requiresChangeId && spec.proposal.includes('Зачем') && spec.tasks.includes('тесты')))
 })

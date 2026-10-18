@@ -5,7 +5,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createRequestDraft } from './requests.mjs'
 import { createGitHubClient } from '../execution/git.mjs'
-import { analyzeRequest } from './analyze.mjs'
+import { analyzeRequest, draftSpecs } from './analyze.mjs'
 
 const nextId = async (repoDir) => {
   const names = await fs.readdir(path.join(repoDir, 'requests')).catch(() => [])
@@ -27,6 +27,7 @@ export function createRequestService({ repo, repoDir, keyDir = '/etc/agent/githu
       const requestId = await nextId(repoDir)
       const requestTitle = String(title ?? clean.split('\n')[0]).slice(0, 120)
       const analysis = analyze(clean)
+      analysis.specs = draftSpecs(analysis, clean)
       const requestDir = path.join(repoDir, 'requests', requestId)
       await createRequestDraft({
         dir: requestDir,

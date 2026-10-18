@@ -38,3 +38,19 @@ export function analyzeRequest(text) {
     hits: { assistant: assistantHits, agent: agentHits },
   }
 }
+
+
+/** Черновик компонентной спеки для E4: без номера changeId и SHA. */
+export function draftSpecs(analysis, text) {
+  const clean = String(text ?? '').trim()
+  return (analysis.components ?? []).map((component) => ({
+    repository: component.repository,
+    changePrefix: component.changePrefix,
+    // Номер выделяет отдельный шаг: по нему создаётся ветка и OpenSpec-папка.
+    requiresChangeId: true,
+    proposal: `# ${component.changePrefix}-TBD: ${clean.split('\n')[0].slice(0, 100)}\n\n## Зачем\n\n${clean}\n\n## Что меняется\n\n- черновик, требуется уточнение компонентной спеки.\n`,
+    design: `# Решение\n\nЧерновик E4: архитектурные решения для ${component.repository} ещё не зафиксированы.\n`,
+    tasks: `# Задачи\n\n- [ ] уточнить поведение и границы\n- [ ] добавить тесты\n- [ ] обновить HANDOFF\n`,
+    acceptance: `# Приёмка\n\n- [ ] наблюдаемый критерий из заявки\n`,
+  }))
+}
