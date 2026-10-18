@@ -54,3 +54,17 @@
 - Деплой F1 после приведения тестов бота в зелёное состояние и завершения PLB-026.
 - Сквозная приёмка с реальной ready-заявкой: specify→approve→poll→implement→deploy.
 - Раздел 3 поручения (автономный личный помощник) — отдельные изменения, не начат.
+
+## Раздел 3 — автономный помощник (в работе)
+
+- **3.1 Модель дел** — PLB-029 (бот, `de3b31f`): WorkItem kinds goal/project/
+  obligation/decision/question/result, epistemic fact/assumption/proposal, owner/scope,
+  provenance, dates, history, staleAfter; JSON-хранилище; тесты.
+- **3.2 Наблюдатели** — PLA-45 (`54c95cb`): реестр источников, GitHub HEAD и серверный
+  probe, evidence/freshness/findings; unavailable явный; `/v1/observers`, `/v1/observe`.
+- **3.3 /review** — PLA-46 (`ea58921`): детерминированные 1–3 предложения с источником,
+  почему сейчас, пользой, стоимостью и проверкой; `/v1/review`.
+- Production release `212206`: agents/review/observe live; `/v1/review` отвечает.
+
+Осталось: теневой режим, инициативы/дедуп/тихие часы, политики действий, оценка пользы,
+и ручной `/review` в боте (сейчас API).
