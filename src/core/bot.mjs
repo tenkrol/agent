@@ -141,10 +141,11 @@ export class AgentBot {
    * @param {string} [options.instructionsPath] - `AGENTS.md` template to install.
    * @param {() => Date} [options.now] - clock, injected by tests.
    */
-  constructor({ config, platform, runner, orchestrator, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, implementer, now = () => new Date() }) {
+  constructor({ config, platform, runner, orchestrator, usage, state, journal, actions, delivery, requests, files, verifier, procedures, schedules, vision, ocr, stt, tts, quick, memory, disk, logger, instructionsPath, mirror = mirrorToAssistant, implementer, runners, now = () => new Date() }) {
     this.config = config
     this.platform = platform
     this.runner = runner
+    this.runners = runners ?? {}
     this.implementer = implementer
     // Оркестратор — единственный владелец цикла исполнение → проверка → исправление.
     this.orchestrator = orchestrator ?? createOrchestrator({
@@ -161,10 +162,10 @@ export class AgentBot {
           capabilities: ['files', 'documents', 'office'],
           taskPrefix: 'Ты файловый агент: работаешь с документами, таблицами, презентациями, PDF и архивами. '
             + 'Не углубляйся в код, если задача не про код. Результат — готовые файлы в outbox.\n\n',
-          runner: { run: (request) => this.runner.run(request) },
+          runner: { run: (request) => (this.runners.files ?? this.runner).run(request) },
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.files?.model ?? config.model?.name,
-          profileStatus: 'unsupported',
+          profileStatus: this.runners.files ? 'active' : 'unsupported',
         }),
         createDshExecutor({
           id: 'monitor',
@@ -172,10 +173,10 @@ export class AgentBot {
           taskPrefix: 'Ты агент-наблюдатель: проверяешь состояние хоста и сервисов, метрики, '
             + 'диски/память/процессы, журналы и алерты. Не меняй систему без явной просьбы; '
             + 'опирайся на deploy/agent-metrics, /observe и alert-скрипты.\n\n',
-          runner: { run: (request) => this.runner.run(request) },
+          runner: { run: (request) => (this.runners.monitor ?? this.runner).run(request) },
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.monitor?.model ?? config.model?.name,
-          profileStatus: 'unsupported',
+          profileStatus: this.runners.monitor ? 'active' : 'unsupported',
         }),
         createDshExecutor({
           id: 'personal',
@@ -183,10 +184,10 @@ export class AgentBot {
           taskPrefix: () => `Ты персональный агент владельца. Учитывай только эти факты памяти:\n`
             + `${this.memory?.render?.() ?? 'память пуста'}\n\n`
             + 'Личные задачи: напоминания, предпочтения, планы, календарь. Не выдумывай факты.\n\n',
-          runner: { run: (request) => this.runner.run(request) },
+          runner: { run: (request) => (this.runners.personal ?? this.runner).run(request) },
           limits: config.limits ?? {},
           modelProfile: config.agentProfiles?.personal?.model ?? config.model?.name,
-          profileStatus: 'unsupported',
+          profileStatus: this.runners.personal ? 'active' : 'unsupported',
         }),
         {
           id: 'quick',

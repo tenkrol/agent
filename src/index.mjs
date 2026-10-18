@@ -274,6 +274,27 @@ async function main() {
     baseDir: config.spec.implementDir,
     logger,
   })
+  // F4: отдельные DSH-профили на роль; общий runner не мутирует между задачами.
+  const makeRoleRunner = (profile) => new DshTaskRunner({
+    command: config.dsh.bin,
+    workspaceDir: dir,
+    dshHome: config.dsh.home,
+    profile,
+    permissionMode: config.dsh.permissionMode,
+    apiKey: config.model.apiKey,
+    timeoutMs: config.limits.taskTimeoutMs,
+    tokenBudget: config.limits.taskTokenBudget,
+    maxSteps: config.limits.taskMaxSteps,
+    logger,
+    cgroup: cgroupLimiter,
+    onEvent: (event) => bot?.onDshEvent(event),
+  })
+  const runners = {
+    files: makeRoleRunner('files'),
+    monitor: makeRoleRunner('monitor'),
+    personal: makeRoleRunner('personal'),
+  }
+
   const vision = new VisionClient({
     baseUrl: config.vision.baseUrl,
     apiKey: config.vision.apiKey,
@@ -377,6 +398,7 @@ async function main() {
     disk,
     logger,
     instructionsPath: path.join(projectDir, 'deploy', 'workspace', 'AGENTS.md.template'),
+    runners,
     implementer: (input) => implementService.implement({
       requestId: input.requestId,
       retry: input.retry,
