@@ -2879,7 +2879,48 @@ export class AgentBot {
   /** Park a task that offered variants, and send them as buttons. */
   async parkForVariants({ job, result, reply, statusMessageId, outputs, leaseContext = {} }) {
     const sessionId = result.sessionId ?? job.sessionId
-    const parked = leaseContext.park?.({ payload: { variants: reply.variants, question: reply.question || undefined, sessionId }, outbox: null })
+    const personalBody = [
+      reply.answer === '' ? '' : reply.answer,
+      reply.question === '' ? '' : `❓ ${reply.question}`,
+      `🔀 По задаче ${job.id} есть варианты:`,
+      '',
+      ...reply.variants.map((variant) => `*${variant.n}.* ${variant.text}`),
+      '',
+      '_Нажмите кнопку, ответьте номером или напишите словами — выполню выбранное._',
+    ].filter((part) => part !== '').join('\n')
+    const routeBody = [
+      reply.answer === '' ? '' : reply.answer,
+      reply.question === '' ? '' : `❓ ${reply.question}`,
+      `🔀 По задаче ${job.id} есть варианты:`,
+      '',
+      ...reply.variants.map((variant) => `${variant.n}. ${variant.text}`),
+      '',
+      `_Ответьте через контракт: POST /v1/tasks/${job.id}/reply._`,
+    ].filter((part) => part !== '').join('\n')
+    const event = job.route
+      ? buildQuestionEvent({
+        task: { ...job, route: job.route },
+        text: routeBody,
+        question: reply.question || '',
+        variants: reply.variants,
+        version: job.resultVersion ?? 1,
+        maxChars: this.config.delivery?.textChars ?? 3500,
+      })
+      : undefined
+    const outbox = job.route
+      ? { eventId: event.eventId, event }
+      : {
+        eventId: `variants:${job.id}:${job.resultVersion ?? 1}`,
+        kind: 'personal',
+        taskId: job.id,
+        chatId: job.chatId,
+        text: personalBody,
+        replyToMessageId: this.jobReplyTo(job),
+      }
+    const parked = leaseContext.park?.({
+      payload: { variants: reply.variants, question: reply.question || undefined, sessionId },
+      outbox,
+    })
     if (parked && parked.ok === false && parked.unsupported !== true) return
     await this.lifecycle.awaitAnswer({
       taskId: job.id,
@@ -2900,42 +2941,17 @@ export class AgentBot {
       },
     })
     if (job.route) {
-      const body = [
-        reply.answer === '' ? '' : reply.answer,
-        reply.question === '' ? '' : `❓ ${reply.question}`,
-        `🔀 По задаче ${job.id} есть варианты:`,
-        '',
-        ...reply.variants.map((variant) => `${variant.n}. ${variant.text}`),
-        '',
-        `_Ответьте через контракт: POST /v1/tasks/${job.id}/reply._`,
-      ].filter((part) => part !== '').join('\n')
-      await this.delivery?.enqueue(buildQuestionEvent({
-        task: { ...job, route: job.route },
-        text: body,
-        question: reply.question || '',
-        variants: reply.variants,
-        version: job.resultVersion ?? 1,
-        maxChars: this.config.delivery?.textChars ?? 3500,
-      }))
+      await this.delivery?.enqueue(event)
       this.logger?.info('remote variants queued', { taskId: job.id, variants: reply.variants.length })
       return
     }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: `🔀 Задача ${job.id}: предложены варианты.` })
     await this.sendOutputs({ job, outputs })
-    const body = [
-      reply.answer === '' ? '' : reply.answer,
-      reply.question === '' ? '' : `❓ ${reply.question}`,
-      `🔀 По задаче ${job.id} есть варианты:`,
-      '',
-      ...reply.variants.map((variant) => `*${variant.n}.* ${variant.text}`),
-      '',
-      '_Нажмите кнопку, ответьте номером или напишите словами — выполню выбранное._',
-    ].filter((part) => part !== '').join('\n')
-    const sent = await this.safeSend(job.chatId, body, {
+    const sent = await this.safeSend(job.chatId, personalBody, {
       keyboard: this.variantsKeyboard(job.id, reply.variants),
       replyToMessageId: this.jobReplyTo(job),
     })
-    await this.mirrorResult(body, job.id)
+    await this.mirrorResult(personalBody, job.id)
     if (sent?.messageId !== undefined) {
       const awaiting = this.awaitingFor(job.chatId)
       if (awaiting) await this.setAwaiting(job.chatId, { ...awaiting, messageId: sent.messageId })
