@@ -125,9 +125,9 @@ export function loadConfig(env = process.env) {
       timeoutMs: positiveInt(read(env, 'ROUTER_TIMEOUT_MS'), 'ROUTER_TIMEOUT_MS', { min: 5000, max: 600_000 }),
     },
     spec: {
-      repo: String(read(env, 'SPEC_REPO')).trim() || 'tenkrol/assistant-work',
-      dir: String(read(env, 'SPEC_REPO_DIR')).trim() || '/var/lib/agent/repos/assistant-work',
-      keyDir: String(read(env, 'GITHUB_KEY_DIR')).trim() || '/etc/agent/github',
+      repo: String(read(env, 'SPEC_REPO') ?? '').trim() || 'tenkrol/assistant-work',
+      dir: String(read(env, 'SPEC_REPO_DIR') ?? '').trim() || '/var/lib/agent/repos/assistant-work',
+      keyDir: String(read(env, 'GITHUB_KEY_DIR') ?? '').trim() || '/etc/agent/github',
     },
     agentProfiles: {
       orchestrator: { provider: 'deepseek', model: String(read(env, 'ORCHESTRATOR_MODEL')).trim() || String(read(env, 'MODEL_NAME')).trim() },
