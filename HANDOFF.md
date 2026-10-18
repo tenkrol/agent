@@ -1244,3 +1244,13 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - Live: `REQ-0004` (оба компонента, без вопроса), `REQ-0005` (неясно, вопрос владельцу).
 - `analysis.json` в draft; API возвращает analysis/question.
 - Тесты: 478. E4 всё ещё не закрыт: нет реальных компонентных OpenSpec/changeId.
+
+## 2026-10-18 (off-peak run 2): E4 component spec drafts
+
+- release `release-20261018-130053`, active.
+- `analysis.specs`: для каждого компонента черновик proposal/design/tasks/acceptance
+  (changeId и SHA помечены requiresChangeId).
+- Live: REQ-0006 создан, ответ содержит два spec draft (assistant + agent).
+- Осталось: выделить changeId, записать спеки в компонентные репозитории и обновить
+  manifest заявки; затем E5.
+- Тесты: 479.
