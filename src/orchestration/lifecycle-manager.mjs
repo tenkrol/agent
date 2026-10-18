@@ -202,8 +202,15 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
           queueStore.enqueue({ id: job.id, requestKey: job.requestKey, payload: job })
         }
         // Задачи, пережившие падение в running, тоже должны попасть в память:
-        // drain сам дождётся истечения их аренды.
+        // drain сам дождётся истечения их аренды. Журнал после recover() уже
+        // помечает их interrupted — возвращаем в queued до повторного запуска.
         for (const row of queueStore.listPending()) {
+          if (row.status === 'running' && typeof journal?.requeue === 'function') {
+            await journal.requeue(row.id, {
+              reason: 'восстановление аренды',
+              patch: { resumedAt: now() },
+            }).catch(() => {})
+          }
           if (!state.queue.some((job) => job.id === row.id)) state.queue.push(row.payload)
         }
       }

@@ -87,7 +87,7 @@ test('clearQueue cancels queued SQLite tasks so claim cannot return them', async
 
 test('a crashed running lease is recovered without a new request after TTL', async () => {
   await withQueue(async (queue) => {
-    queue.enqueue({ id: 'a', requestKey: 'a' })
+    queue.enqueue({ id: 'a', requestKey: 'a', payload: { id: 'a' } })
     queue.claim({ owner: 'dead', ttlMs: 40 })
     const lifecycle = createTaskLifecycle({ journal: { get: () => ({ status: 'done' }), recover: async () => [], pending: () => [], awaiting: () => [] }, queueStore: queue })
     let runs = 0
@@ -95,5 +95,25 @@ test('a crashed running lease is recovered without a new request after TTL', asy
     await lifecycle.drain({ runTask: async () => { runs += 1 } })
     assert.equal(runs, 1, 'задача выполнена после истечения аренды без нового запроса')
     assert.equal(queue.get('a').status, 'done')
+  })
+})
+
+test('recovery requeues the journal record of a crashed running lease', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 'a', requestKey: 'a', payload: { id: 'a' } })
+    queue.claim({ owner: 'dead', ttlMs: 20 })
+    const requeued = []
+    const journal = {
+      recover: async () => [{ id: 'a' }],
+      pending: () => [],
+      awaiting: () => [],
+      requeue: async (id, options) => requeued.push({ id, options }),
+    }
+    const lifecycle = createTaskLifecycle({ journal, queueStore: queue })
+    await lifecycle.recover({ recordToJob: (record) => ({ id: record.id }), snapshot: async () => new Map(), workspaceDir: '/tmp' })
+    assert.equal(requeued.length, 1)
+    assert.equal(requeued[0].id, 'a')
+    assert.match(requeued[0].options.reason, /аренд/)
+    assert.equal(lifecycle.queue.some((job) => job.id === 'a'), true)
   })
 })
