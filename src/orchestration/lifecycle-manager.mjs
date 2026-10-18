@@ -196,7 +196,6 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
             if (!renewed) leaseSignal.abort()
           }, Math.max(500, Math.floor(leaseTtlMs / 3)))
           : undefined
-        heartbeat?.unref?.()
         try {
           await runTask(job, { leaseSignal: leaseSignal.signal, owns, ...(queueStore && lease ? { accept, park, markOutbox } : {}) })
           if (lease) {
