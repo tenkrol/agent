@@ -7,7 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
-import { createGitHubClient } from '../src/integrations/github.mjs'
+import { createGitHubClient } from '../src/execution/git.mjs'
 
 const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' })
 
