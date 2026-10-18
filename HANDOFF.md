@@ -1133,3 +1133,24 @@ PLA-14: агентская часть (контракт v2, события, `ack
 Фактическое production (без изменений этим change): release
 `release-20261017-230742`, `QUEUE_STORE=sqlite`, `QUEUE_WORKERS=1`, сервис active.
 Merge/деплой PLA-23 не выполнялись.
+
+## 2026-10-18: PLA-23 установлен; SQLite single-worker проверен
+
+- `main` = `27b715b` (+ архив), релиз `release-20261018-071628`, сервис active.
+- Установка: один раз `install-remote.sh` завис после переключения симлинка; сервис
+  перезапущен вручную, релиз активен, здоровье моста проверено.
+- SQLite fencing: requeue awaiting/done с payload и новым generation; clearQueue
+  отменяет queued; complete/setStatus/heartbeat требуют owner+status+живую аренду;
+  stale не пишет терминал/не доставляет; recovery running-аренды возвращает журнал
+  в queued.
+- Живые проверки:
+  - обычная XLSX `072152-c1n` → `done`, проверка passed;
+  - crash-recovery: `072313-c1o` (DOCX) убит `kill -9` во время выполнения; после
+    рестарта `queue recovered {"queued":0,"interrupted":1}`, после TTL задача
+    перезапущена без нового запроса и дошла до терминального `failed` по шагам
+    (результат и файлы доставлены) — задача не потеряна и не зависла;
+  - откат релиза `release-20261018-071141` и возврат на `071628` проверены.
+- `QUEUE_STORE=sqlite`, `QUEUE_WORKERS=1`; workers>1 программно запрещены.
+- Тесты: 443 зелёных (полный прогон `--test-concurrency=1`; обычный параллельный
+  прогон один раз завис на тестах, каждый файл отдельно зелёный).
+- PLA-20 остаётся открытым: изоляция workspace для workers>1.
