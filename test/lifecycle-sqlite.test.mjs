@@ -117,3 +117,24 @@ test('recovery requeues the journal record of a crashed running lease', async ()
     assert.equal(lifecycle.queue.some((job) => job.id === 'a'), true)
   })
 })
+
+test('recovery reconciles a terminal SQLite result with a stale JSONL record', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 'a', requestKey: 'a', payload: { id: 'a' } })
+    const claim = queue.claim({ owner: 'w1', ttlMs: 60_000 })
+    queue.complete({ taskId: 'a', generation: claim.generation, owner: 'w1', status: 'done' })
+    const closed = []
+    const journal = {
+      recover: async () => [],
+      pending: () => [],
+      awaiting: () => [],
+      recent: () => [{ id: 'a', status: 'running' }],
+      close: async (id, patch) => closed.push({ id, patch }),
+    }
+    const lifecycle = createTaskLifecycle({ journal, queueStore: queue })
+    await lifecycle.recover({ recordToJob: (record) => ({ id: record.id }), snapshot: async () => new Map(), workspaceDir: '/tmp' })
+    assert.equal(closed.length, 1)
+    assert.equal(closed[0].id, 'a')
+    assert.equal(closed[0].patch.status, 'done')
+  })
+})

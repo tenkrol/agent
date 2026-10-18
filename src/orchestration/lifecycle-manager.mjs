@@ -214,6 +214,18 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
           if (!state.queue.some((job) => job.id === row.id)) state.queue.push(row.payload)
         }
       }
+      // Сверка после сбоя между SQLite и JSONL: если очередь уже зафиксировала
+      // терминальный результат, журнал нельзя оставлять running/verifying.
+      if (queueStore && typeof journal?.recent === 'function') {
+        const terminal = new Set(['done', 'partial', 'failed', 'cancelled'])
+        for (const record of journal.recent(1000)) {
+          if (terminal.has(record.status)) continue
+          const row = queueStore.get(record.id)
+          if (row && terminal.has(row.status)) {
+            await journal.close(record.id, { status: row.status, reason: 'сверка с SQLite-очередью' }).catch(() => {})
+          }
+        }
+      }
       if (journal) {
         for (const record of interrupted) {
           try {
