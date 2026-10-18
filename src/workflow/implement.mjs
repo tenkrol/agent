@@ -20,7 +20,7 @@ ${text}
 - если изменение уже реализовано, ничего не коммить;
 - в конце коротко перечисли изменённые файлы и проверки.`
 
-export function createImplementService({ components = [], git, runner, baseDir, timeoutMs, logger, maxSteps = 80, tokenBudget = 800_000 } = {}) {
+export function createImplementService({ components = [], git, runner, baseDir, timeoutMs, logger, maxSteps = 100, tokenBudget = 2_500_000 } = {}) {
   return {
     /** Прочитать заявку с ветки req/<requestId>. */
     async loadRequest({ requestId, specRepo, specDir, keyPath }) {
