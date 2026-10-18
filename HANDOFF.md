@@ -1281,3 +1281,12 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - красная ветка impl не пушится;
 - live-проверка `impl/REQ-0009-PLA-32`: spec-check ok, node --test 483 pass;
 - release `release-20261018-183737`, active; тесты 486.
+
+## 2026-10-18: E7 (PLA-34) — deploy готов, установка ждёт root
+
+- `POST /v1/deploy`: confirm==requestId, повторные проверки (тесты+spec-check),
+  merge `impl/*`→main, затем `install`.
+- Установщик не настроен: процесс агента работает под `agent`, `sudo -n` недоступен.
+  API возвращает `installed.required` и команду для владельца/root.
+- release `release-20261018-183945`, active; тесты 490.
+- E7 не закрыт: фактическая установка и подтверждение владельца ещё не выполнены.
