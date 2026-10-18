@@ -129,6 +129,7 @@ export function loadConfig(env = process.env) {
       dir: String(read(env, 'SPEC_REPO_DIR') ?? '').trim() || '/var/lib/agent/repos/assistant-work',
       keyDir: String(read(env, 'GITHUB_KEY_DIR') ?? '').trim() || '/etc/agent/github',
       attachSpecs: String(read(env, 'REQUEST_ATTACH_SPECS') ?? 'true').trim() !== 'false',
+      implementDir: String(read(env, 'IMPLEMENT_DIR') ?? '').trim() || '/var/lib/agent/repos/implement',
       components: [
         {
           repository: 'tenkrol/agent',

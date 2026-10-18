@@ -36,6 +36,7 @@ import { createModelClient } from './integrations/model.mjs'
 import { createVerifyPorts } from './verification/ports.mjs'
 import { createRequestService } from './workflow/request-service.mjs'
 import { createComponentSpecService } from './workflow/component-specs.mjs'
+import { createImplementService } from './workflow/implement.mjs'
 import { createGitHubClient } from './execution/git.mjs'
 import { ProceduresStore } from './storage/procedures.mjs'
 import { createProcedures } from './procedures/index.mjs'
@@ -212,6 +213,15 @@ async function main() {
 
   /** @type {AgentBot} */
   let bot
+  const implementService = createImplementService({
+    components: config.spec.components,
+    git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
+    runner,
+    baseDir: config.spec.implementDir,
+    timeoutMs: config.task.timeoutMs,
+    logger,
+  })
+
   const cgroupLimiter = config.task.cgroup
     ? new CgroupLimiter({
       memoryMaxBytes: config.task.memoryMaxBytes,
@@ -369,6 +379,12 @@ async function main() {
       activity: (query) => bot.activity?.recent?.(query) ?? [],
       usage: () => bot.usageSnapshot?.() ?? {},
       onCreateRequest: (body) => requestService.create(body),
+      onImplement: (body) => implementService.implement({
+        requestId: String(body.requestId),
+        specRepo: config.spec.repo,
+        specDir: config.spec.dir,
+        keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
+      }),
       onSubmitV2: (request) => bot.submitV2Task(request),
       getTask: (id) => bot.taskState(id),
       onReply: (id, body) => bot.replyTask(id, body),

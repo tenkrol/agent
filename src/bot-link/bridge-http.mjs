@@ -101,6 +101,7 @@ export class BridgeServer {
     agents,
     usage,
     onCreateRequest,
+    onImplement,
     activity,
     files,
     routeConfig = {},
@@ -121,6 +122,7 @@ export class BridgeServer {
     this.agents = agents
     this.usage = usage
     this.onCreateRequest = onCreateRequest
+    this.onImplement = onImplement
     this.activity = activity
     this.files = files
     this.routeConfig = routeConfig
@@ -182,7 +184,7 @@ export class BridgeServer {
     const known = pathname === '/bridge' || pathname === '/v1/files' || pathname.startsWith('/v1/files/')
       || pathname === '/v1/tasks' || pathname.startsWith('/v1/tasks/') || pathname === '/v1/capabilities'
       || pathname === '/v1/agents' || pathname === '/v1/activity' || pathname === '/v1/usage'
-      || pathname === '/v1/requests'
+      || pathname === '/v1/requests' || pathname === '/v1/implement'
     if (!known) {
       send(404, { ok: false, error: 'not found' })
       return
@@ -214,6 +216,14 @@ export class BridgeServer {
       if (request.method === 'GET' && pathname === '/v1/agents') {
         send(200, { ok: true, contract: 2, agents: await this.agents?.() ?? [] })
         return
+      }
+      if (request.method === 'POST' && pathname === '/v1/implement') {
+        if (!this.onImplement) return send(503, { ok: false, error: 'implement disabled' })
+        const payload = await this.#json(request)
+        const requestId = String(payload?.requestId ?? '').trim()
+        if (!/^REQ-\d{4,}$/.test(requestId)) return send(400, { ok: false, error: 'requestId required' })
+        const result = await this.onImplement({ requestId })
+        return send(202, { ok: true, ...result })
       }
       if (request.method === 'POST' && pathname === '/v1/requests') {
         if (!this.onCreateRequest) return send(503, { ok: false, error: 'requests disabled' })
