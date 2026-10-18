@@ -1264,3 +1264,13 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - Live: `REQ-0008` — `PLB-025` + `PLA-30`, заданные SHA, оба spec-check проходят;
   в заявке manifest компоненты заполнены.
 - Тесты: 481. PLA-29 в архиве.
+
+## 2026-10-18: PLA-32 / REQ-0009 — README E5 implementation check
+
+- На ветке `spec/REQ-0009-PLA-32`: в README добавлена строка `E5 implementation check`
+  (раздел «Тесты и разработка»), тест `test/readme.test.mjs` проверяет её наличие.
+- Изменение только документационное: код, API, конфигурация и секреты не менялись;
+  деплой не требуется. В main не мержим.
+- `spec-check` — в порядке; новый тест зелёный. Полный прогон: 485 тестов,
+  482 pass, 3 cancelled в `lifecycle-sqlite.test.mjs` (сбой не связан с PLA-32,
+  воспроизводится отдельным запуском).

@@ -236,6 +236,9 @@ journalctl -u dsh-agent -f
 node --test test/*.test.mjs      # 286 тестов, фикстуры лежат в fixtures/
 ```
 
+E5 implementation check — контрольная строка README для заявки REQ-0009 (change PLA-32);
+её наличие проверяет `test/readme.test.mjs`.
+
 Правила, которые стоит помнить при правках: задача всегда идёт в cgroup с лимитами;
 `MemoryDenyWriteExecute` включать нельзя (V8 падает); `ProtectControlGroups=false`
 обязателен для делегирования cgroup; секреты не попадают в задачи; журнал алертов —
