@@ -27,7 +27,7 @@ test('parallel workers are rejected and one worker drains the queue once', async
     lifecycle.enqueue({ id: 'a', requestKey: 'a' })
     lifecycle.enqueue({ id: 'b', requestKey: 'b' })
     const seen = []
-    await assert.rejects(() => lifecycle.drain({ workers: 2, runTask: async () => {} }), /запрещён/)
+    await assert.rejects(() => lifecycle.drain({ workers: 2, runTask: async () => {} }), /изолированного|запрещён/)
     await lifecycle.drain({
       workers: 1,
       runTask: async (job) => { seen.push(job.id); await new Promise((resolve) => setTimeout(resolve, 10)) },

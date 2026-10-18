@@ -129,9 +129,9 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
      * С SQLite каждый worker захватывает задачу через аренду; при workers>1
      * циклы идут параллельно, а повторный захват той же задачи невозможен.
      */
-    async drain({ runTask, onError, isStopping = () => false, workers = 1, owner = `worker-${process.pid}`, leaseTtlMs = 60_000 } = {}) {
-      if (Number(workers) > 1) {
-        throw new Error('QUEUE_WORKERS>1 запрещён: workspace/runner/progress не изолированы на задачу')
+    async drain({ runTask, onError, isStopping = () => false, workers = 1, allowParallel = false, owner = `worker-${process.pid}`, leaseTtlMs = 60_000 } = {}) {
+      if (Number(workers) > 1 && !allowParallel) {
+        throw new Error('QUEUE_WORKERS>1 требует изолированного workspace')
       }
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
       const waitForLease = async () => {

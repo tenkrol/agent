@@ -30,6 +30,7 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
     sessionId,
     signal,
     executorId = 'dsh',
+    workspaceDir,
     budget: providedBudget,
     stopping = false,
     onStage = () => {},
@@ -99,6 +100,7 @@ export function createOrchestrator({ executors = [], verifier, limits = {}, logg
         tokenBudget: budget.state.tokenLimit > 0 ? budget.remaining().tokens : 0,
         maxSteps: budget.state.maxSteps > 0 ? budget.remaining().steps : 0,
         timeoutMs: budget.state.timeLimitMs > 0 ? budget.remaining().timeMs : 0,
+        workspaceDir,
       })
     } catch (error) {
       logger?.warn?.('executor failed', { executor: executorId, error: error?.message ?? error })

@@ -9,8 +9,8 @@ export function createDshExecutor({ runner } = {}) {
   return {
     id: 'dsh',
     capabilities: ['code', 'files', 'long-task', 'verification-repair'],
-    async execute({ task, sessionId, signal, id, tokenBudget, maxSteps, timeoutMs } = {}) {
-      const result = await runner.run({ task, sessionId, signal, id, tokenBudget, maxSteps, timeoutMs })
+    async execute({ task, sessionId, signal, id, tokenBudget, maxSteps, timeoutMs, workspaceDir } = {}) {
+      const result = await runner.run({ task, sessionId, signal, id, tokenBudget, maxSteps, timeoutMs, workspaceDir })
       return {
         ...result,
         usage: result?.usage ?? { totalTokens: undefined, steps: undefined, unknown: true },

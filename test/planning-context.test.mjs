@@ -64,6 +64,18 @@ test('unattended planning spends from the same budget before DSH', async () => {
 test('QUEUE_WORKERS>1 is rejected before the bot starts', async () => {
   await assert.rejects(
     () => createBotHarness({ configEnv: { QUEUE_WORKERS: '2' } }),
-    /QUEUE_WORKERS>1 запрещён/,
+    /QUEUE_WORKERS>1/,
   )
+})
+
+test('per-task workspace allows parallel workers', async () => {
+  const env = await createBotHarness({
+    configEnv: { QUEUE_WORKERS: '2', WORKSPACE_PER_TASK: 'true' },
+    runner: { async run() { return { ok: true, text: 'ok', usage: { totalTokens: 1, steps: 1 } } } },
+  })
+  try {
+    assert.equal(env.bot.config.workspace.perTask, true)
+  } finally {
+    await env.close()
+  }
 })

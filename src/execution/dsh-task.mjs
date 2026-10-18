@@ -152,7 +152,7 @@ export class DshTaskRunner {
    * @param {object} request - `task` text, optional `sessionId`, `signal`, `id`.
    * @returns {Promise<object>} the run result; `ok` is false for a failed or timed-out run.
    */
-  async run({ task, sessionId, signal, id, tokenBudget, maxSteps, timeoutMs } = {}) {
+  async run({ task, sessionId, signal, id, tokenBudget, maxSteps, timeoutMs, workspaceDir } = {}) {
     const startedAt = Date.now()
     // Лимиты процедуры действуют только на этот запуск и не меняют глобальные.
     const runTokenBudget = Number(tokenBudget) > 0 ? Number(tokenBudget) : this.tokenBudget
@@ -183,7 +183,7 @@ export class DshTaskRunner {
     let child
     try {
       child = this.spawnImpl(this.command, this.args({ sessionId }), {
-        cwd: this.workspaceDir,
+        cwd: workspaceDir ?? this.workspaceDir,
         env: this.childEnv(),
         stdio: ['pipe', 'pipe', 'pipe'],
         // A new process group: killing it on timeout takes the bash tool's

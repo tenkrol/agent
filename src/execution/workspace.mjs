@@ -289,3 +289,32 @@ export function formatSize(bytes) {
   if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} МБ`
   return `${(value / (1024 * 1024 * 1024)).toFixed(2)} ГБ`
 }
+
+/** Отдельная рабочая папка задачи (для параллельных workers). */
+export function taskWorkspacePath(baseDir, taskId) {
+  return path.join(baseDir, 'tasks', String(taskId).replace(/[^A-Za-z0-9_.-]/g, '_'))
+}
+
+/**
+ * Подготовить рабочую папку конкретной задачи.
+ *
+ * При perTask=false возвращается общая папка (прежнее поведение). При true —
+ * отдельный каталог с inbox/outbox и копией AGENTS.md, чтобы два worker не
+ * перемешивали файлы и не видели чужие результаты.
+ */
+export async function prepareTaskWorkspace(baseDir, taskId, { perTask = false } = {}) {
+  if (!perTask) {
+    await ensureWorkspace(baseDir)
+    return baseDir
+  }
+  const dir = taskWorkspacePath(baseDir, taskId)
+  await ensureWorkspace(dir)
+  const instructions = path.join(baseDir, 'AGENTS.md')
+  const target = path.join(dir, 'AGENTS.md')
+  try {
+    await fs.access(target)
+  } catch {
+    await fs.copyFile(instructions, target).catch(() => {})
+  }
+  return dir
+}

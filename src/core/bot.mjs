@@ -41,6 +41,7 @@ import { STATUS, TERMINAL, describeTask } from '../storage/tasks.mjs'
 import { bodyHash } from '../storage/requests.mjs'
 import { redactSecrets } from '../secrets/guard.mjs'
 import { createOrchestrator } from '../orchestration/orchestrator.mjs'
+import { prepareTaskWorkspace } from '../execution/workspace.mjs'
 import { createBudget, minLimit } from '../orchestration/budget.mjs'
 import { createDshExecutor } from '../agents/dsh/index.mjs'
 import { createTaskLifecycle } from '../orchestration/lifecycle-manager.mjs'
@@ -183,8 +184,8 @@ export class AgentBot {
     this.instructionsPath = instructionsPath
     this.now = now
     // Параллельные workers без изоляции workspace/runner/progress запрещены.
-    if (Number(config.queue?.workers ?? 1) > 1) {
-      throw new Error('QUEUE_WORKERS>1 запрещён: workspace/runner/progress не изолированы на задачу')
+    if (Number(config.queue?.workers ?? 1) > 1 && !config.workspace?.perTask) {
+      throw new Error('QUEUE_WORKERS>1 требует WORKSPACE_PER_TASK=true: иначе workspace не изолирован')
     }
     // Очередь, восстановление, awaiting и завершение принадлежат lifecycle.
     // SQLite включается только явно: по умолчанию остаётся проверенный JSONL.
@@ -2317,6 +2318,7 @@ export class AgentBot {
       runTask: (job, context) => this.executeTask(job, context),
       isStopping: () => this.stopping,
       workers: this.config.queue?.workers ?? 1,
+      allowParallel: Boolean(this.config.workspace?.perTask),
       leaseTtlMs: this.config.queue?.leaseTtlMs ?? 60_000,
       onError: async (job, error) => {
         this.logger?.error('task execution failed', { taskId: job.id, error })
@@ -2332,7 +2334,7 @@ export class AgentBot {
   async executeTask(job, leaseContext = {}) {
     const stale = () => Boolean(leaseContext.leaseSignal?.aborted || (leaseContext.owns && !leaseContext.owns()))
     if (stale()) return
-    const { dir } = this.config.workspace
+    const dir = await prepareTaskWorkspace(this.config.workspace.dir, job.id, { perTask: this.config.workspace.perTask })
     const timeZone = this.config.runtime.timeZone
 
     // The queue may have waited: re-check the budget before spending anything.
@@ -2561,6 +2563,7 @@ export class AgentBot {
         task,
         sessionId,
         signal: controller.signal,
+        workspaceDir: dir,
         budget: attemptBudget,
         stopping: this.stopping,
         onStage: (stage) => {

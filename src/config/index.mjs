@@ -66,6 +66,7 @@ export function loadConfig(env = process.env) {
       maxAttachmentBytes,
       maxOutputFiles: positiveInt(read(env, 'MAX_OUTPUT_FILES'), 'MAX_OUTPUT_FILES', { min: 1, max: 50 }),
       maxOutputFileBytes: positiveInt(read(env, 'MAX_OUTPUT_FILE_BYTES'), 'MAX_OUTPUT_FILE_BYTES', { min: 1024, max: 2_000_000_000 }),
+      perTask: boolean(read(env, 'WORKSPACE_PER_TASK'), 'WORKSPACE_PER_TASK'),
       retentionDays: positiveInt(read(env, 'OUTPUT_RETENTION_DAYS'), 'OUTPUT_RETENTION_DAYS', { min: 0, max: 3650, allowZero: true }),
       alertMb: positiveInt(read(env, 'WORKSPACE_ALERT_MB'), 'WORKSPACE_ALERT_MB', { min: 1, max: 1_000_000 }),
     },

@@ -140,8 +140,8 @@ test('registry refuses unknown executors instead of substituting', () => {
 test('dsh adapter passes the remaining limits to the existing runner', async () => {
   const calls = []
   const executor = createDshExecutor({ runner: { run: async (request) => { calls.push(request); return { ok: true, usage: usage(10) } } } })
-  await executor.execute({ task: 'x', signal: undefined, id: 't-1', tokenBudget: 123, maxSteps: 4, timeoutMs: 5000 })
-  assert.deepEqual(calls[0], { task: 'x', sessionId: undefined, signal: undefined, id: 't-1', tokenBudget: 123, maxSteps: 4, timeoutMs: 5000 })
+  await executor.execute({ task: 'x', signal: undefined, id: 't-1', tokenBudget: 123, maxSteps: 4, timeoutMs: 5000, workspaceDir: undefined })
+  assert.deepEqual(calls[0], { task: 'x', sessionId: undefined, signal: undefined, id: 't-1', tokenBudget: 123, maxSteps: 4, timeoutMs: 5000, workspaceDir: undefined })
 })
 
 test('cancel during the second verification never reports done', async () => {
