@@ -82,3 +82,24 @@
 - Бот: PLB-030 (`3458246`) — `/review` с источником/почему/пользой/стоимостью/проверкой;
   тесты 999.
 - Деплой бота F1/PLB-030 всё ещё ждёт зелёных тестов (2 чужих теста падают на сервере).
+
+## Сквозная приёмка REQ-0010 (18–19.10.2026)
+
+Сценарий: сообщение → specify → approval → poll → implement → проверки → deploy →
+ручная установка.
+
+- Заявка: `REQ-0010`, ветка `req/REQ-0010`; компонент `PLA-51` (`tenkrol/agent`).
+- Specify: DSH исследовал код, заполнил proposal/design/tasks/spec/questions;
+  status ready; manifest обновлён на ready SHA (найден и исправлен дефект: approval
+  ссылался на каркасный SHA).
+- Approval: `approvedBy=owner`, revision 1, specificationCommit `7d08fe7…`.
+- Poll: `/v1/poll` нашёл заявку и поставил реализацию в очередь (kind=implement).
+- Implement: два DSH-прогона (основной и repair) в изолированных каталогах; ветка
+  `impl/REQ-0010-PLA-51`, коммиты `f4d2a2e` (README/test) и `edf9752` (починка
+  timezone-проверок plan/quick). Статус verified.
+- Deploy: mergedSha = checkedSha = publishedSha = `94d51e3…`; проверки результата
+  слияния зелёные; `installed.state=installation_required`.
+- Ручная установка: release `release-20261018-215346`, сервис active; README содержит
+  `Acceptance E2E smoke`.
+- Итог: generated/tested/merged/installed/healthy разделены; автоматическая установка
+  не заявлялась (политика владельца — вручную).
