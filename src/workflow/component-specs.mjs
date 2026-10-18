@@ -48,7 +48,10 @@ export function createComponentSpecService({ components, git, logger } = {}) {
         const prefix = spec.changePrefix ?? prefixOf(spec.repository)
         await git.clone({ repo: spec.repository, dir: component.dir, branch: 'main', keyPath: component.keyPath, fresh: true })
         const number = await nextNumber(component.dir, prefix)
-        const changeId = `${prefix}-${number}`
+        // В Assistant-репозитории имена change-папок трёхзначные (PLB-025).
+        const changeId = component.repository === 'tenkrol/assistant'
+          ? `${prefix}-${String(number).padStart(3, '0')}`
+          : `${prefix}-${number}`
         const title = String(text || 'Доработка').split('\n')[0].slice(0, 100)
         const changeDir = path.join(component.dir, 'openspec', 'changes', changeId)
         await fs.mkdir(path.join(changeDir, 'specs', component.domain), { recursive: true })
