@@ -1354,7 +1354,7 @@ export class AgentBot {
    * @param {object} request - `job` and the id of its status message.
    * @returns {Promise<object|undefined>} a marker when answered, undefined to run DSH.
    */
-  async tryQuickAnswer({ job, statusMessageId, controller: providedController, budget, startedAt }) {
+  async tryQuickAnswer({ job, statusMessageId, controller: providedController, budget, startedAt, leaseContext = {} }) {
     if (!this.shouldTryQuick(job)) return undefined
     const controller = providedController ?? new AbortController()
     const quickSignal = controller.signal
@@ -1395,6 +1395,9 @@ export class AgentBot {
     const quick = outcome?.result?.quick
     const cancelled = [STATUS.cancelled, STATUS.interrupted].includes(outcome?.status)
     const budgetBlocked = ['budget', 'unknown_budget'].includes(outcome?.reason)
+    if (leaseContext.leaseSignal?.aborted) {
+      return { quick: true, cancelled: true, leaseLost: true, text: quick?.text ?? '' }
+    }
     if (cancelled || budgetBlocked) {
       await this.lifecycle.finishTask(job.id, { status: outcome.status, reason: outcome.reason, quick: true })
       return { quick: true, cancelled, budgetBlocked, text: quick?.text ?? '' }
@@ -2375,6 +2378,13 @@ export class AgentBot {
     // One controller and one budget cover quick routing, DSH, verification and
     // repair; routing spend is not lost if the task falls through to DSH.
     const attemptController = new AbortController()
+    const leaseLost = () => Boolean(leaseContext.leaseSignal?.aborted)
+    // Потеря SQLite-аренды должна останавливать реальный runner, а не только
+    // проверяться после завершения. Один сигнал на quick/план/DSH/проверку.
+    if (leaseContext.leaseSignal) {
+      if (leaseContext.leaseSignal.aborted) attemptController.abort()
+      else leaseContext.leaseSignal.addEventListener('abort', () => attemptController.abort(), { once: true })
+    }
     const attemptStartedAt = this.now().getTime()
     const attemptBudget = createBudget({
       tokenLimit: minLimit(this.config.limits.taskTokenBudget, job.procedure?.limits?.taskTokenBudget),
@@ -2387,6 +2397,7 @@ export class AgentBot {
     // keeps those runs from wandering (the expensive failure mode).
     const silentPlan = await this.maybePlanUnattended({ job, controller: attemptController, budget: attemptBudget })
     if (attemptController.signal.aborted) {
+      if (leaseLost()) return
       await this.lifecycle.finishTask(job.id, { status: STATUS.cancelled, reason: 'cancelled' })
       return
     }
@@ -2468,6 +2479,7 @@ export class AgentBot {
       controller: attemptController,
       budget: attemptBudget,
       startedAt: attemptStartedAt,
+      leaseContext,
     })
     if (quick && !quick.fallback) return quick
 

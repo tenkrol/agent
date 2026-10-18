@@ -1,0 +1,59 @@
+/**
+ * E0-A: потеря аренды останавливает реальный runner, а не только пишет stale.
+ */
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { createBotHarness } from './helpers.mjs'
+
+test('losing the lease aborts the real runner signal and does not close the task', async () => {
+  let runnerSignal
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  const env = await createBotHarness({
+    configEnv: { PLAN_MODE: 'never' },
+    runner: {
+      async run({ signal }) {
+        runnerSignal = signal
+        started()
+        await new Promise((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', resolve, { once: true })
+        })
+        return {
+          ok: false,
+          aborted: true,
+          exitCode: null,
+          timedOut: false,
+          text: '',
+          usage: { totalTokens: 1, steps: 1 },
+          tools: [],
+          errors: [],
+          stderr: '',
+          durationMs: 5,
+        }
+      },
+    },
+  })
+  try {
+    const lease = new AbortController()
+    const job = {
+      id: 'lease-task-1',
+      chatId: 42,
+      userId: 42,
+      text: 'сделай файл отчёта',
+      brief: 'сделай файл отчёта',
+      attachments: [],
+    }
+    const running = env.bot.executeTask(job, { leaseSignal: lease.signal, owns: () => true })
+    await ready
+    lease.abort()
+    await running
+    assert.equal(runnerSignal.aborted, true, 'runner получил abort от потери аренды')
+    const record = env.journal.get('lease-task-1')
+    assert.ok(record)
+    assert.notEqual(record.status, 'cancelled', 'потеря аренды не маскируется отменой')
+    assert.notEqual(record.status, 'failed', 'старая попытка не пишет failed')
+  } finally {
+    await env.close()
+  }
+})
