@@ -78,6 +78,17 @@ export function createGitHubClient({ keyDir = '/etc/agent/github', timeoutMs = G
       return { sha: stdout, compareUrl: `https://github.com/${repo}/compare/main...${branch}` }
     },
 
+    /** Слить ветку в target (обычно main) и запушить. */
+    async mergeAndPush({ repo, dir, branch, target = 'main', message, keyPath } = {}) {
+      const key = keyPath ?? keyFor(repo)
+      await runGit(['checkout', target], { cwd: dir, keyPath: key, timeoutMs })
+      await runGit(['pull', '--ff-only', 'origin', target], { cwd: dir, keyPath: key, timeoutMs })
+      await runGit(['-c', 'user.name=tenkrol-agent', '-c', 'user.email=agent@tenkrol.local', 'merge', '--no-ff', branch, '-m', String(message ?? `merge ${branch}`)], { cwd: dir, keyPath: key, timeoutMs })
+      await runGit(['push', 'origin', target], { cwd: dir, keyPath: key, timeoutMs })
+      const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: dir, timeoutMs })
+      return { sha: stdout, target }
+    },
+
     /** Создать PR без API нельзя; возвращаем ссылку на сравнение. */
     prUrl({ repo, branch }) {
       return `https://github.com/${repo}/compare/main...${branch}`

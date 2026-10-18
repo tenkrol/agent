@@ -37,6 +37,7 @@ import { createVerifyPorts } from './verification/ports.mjs'
 import { createRequestService } from './workflow/request-service.mjs'
 import { createComponentSpecService } from './workflow/component-specs.mjs'
 import { createImplementService } from './workflow/implement.mjs'
+import { createDeployService } from './workflow/deploy.mjs'
 import { createGitHubClient } from './execution/git.mjs'
 import { ProceduresStore } from './storage/procedures.mjs'
 import { createProcedures } from './procedures/index.mjs'
@@ -246,6 +247,19 @@ async function main() {
     logger,
   })
 
+  const deployService = createDeployService({
+    components: config.spec.components,
+    git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
+    checks: async ({ repository, branch }) => {
+      const component = config.spec.components.find((item) => item.repository === repository)
+      const dir = path.join(config.spec.implementDir, 'verify', repository.split('/').pop(), branch.replace(/[^A-Za-z0-9._-]/g, '_'))
+      await createGitHubClient({ keyDir: config.spec.keyDir, logger }).clone({ repo: repository, dir, branch, keyPath: component.keyPath, fresh: true })
+      const result = await runCodeChecks({ root: dir, cwd: dir, commands: component.checks ?? [], timeoutMs: config.task.timeoutMs })
+      return { ok: (result.checks ?? []).every((check) => check.exitCode === 0 && !check.error) }
+    },
+    logger,
+  })
+
   const vision = new VisionClient({
     baseUrl: config.vision.baseUrl,
     apiKey: config.vision.apiKey,
@@ -379,6 +393,12 @@ async function main() {
       activity: (query) => bot.activity?.recent?.(query) ?? [],
       usage: () => bot.usageSnapshot?.() ?? {},
       onCreateRequest: (body) => requestService.create(body),
+      onDeploy: (body) => deployService.deploy({
+        requestId: String(body.requestId),
+        component: String(body.component),
+        branch: String(body.branch),
+        confirm: body.confirm,
+      }),
       onImplement: (body) => implementService.implement({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,
