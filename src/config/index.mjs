@@ -124,6 +124,16 @@ export function loadConfig(env = process.env) {
       maxTokens: positiveInt(read(env, 'ROUTER_MAX_TOKENS'), 'ROUTER_MAX_TOKENS', { min: 50, max: 8000 }),
       timeoutMs: positiveInt(read(env, 'ROUTER_TIMEOUT_MS'), 'ROUTER_TIMEOUT_MS', { min: 5000, max: 600_000 }),
     },
+    spec: {
+      repo: String(read(env, 'SPEC_REPO')).trim() || 'tenkrol/assistant-work',
+      dir: String(read(env, 'SPEC_REPO_DIR')).trim() || '/var/lib/agent/repos/assistant-work',
+      keyDir: String(read(env, 'GITHUB_KEY_DIR')).trim() || '/etc/agent/github',
+    },
+    agentProfiles: {
+      orchestrator: { provider: 'deepseek', model: String(read(env, 'ORCHESTRATOR_MODEL')).trim() || String(read(env, 'MODEL_NAME')).trim() },
+      dsh: { provider: 'deepseek', model: String(read(env, 'DSH_MODEL')).trim() || String(read(env, 'MODEL_NAME')).trim() },
+      quick: { provider: 'deepseek', model: String(read(env, 'ROUTER_MODEL')).trim() || String(read(env, 'MODEL_NAME')).trim() },
+    },
     vision: {
       enabled: boolean(read(env, 'VISION'), 'VISION'),
       baseUrl: String(read(env, 'VISION_BASE_URL')).replace(/\/+$/, ''),
