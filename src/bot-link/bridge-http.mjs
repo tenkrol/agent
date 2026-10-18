@@ -118,6 +118,7 @@ export class BridgeServer {
     onBenefit,
     onImplement,
     onDeploy,
+    onInstallReport,
     activity,
     files,
     routeConfig = {},
@@ -155,6 +156,7 @@ export class BridgeServer {
     this.onBenefit = onBenefit
     this.onImplement = onImplement
     this.onDeploy = onDeploy
+    this.onInstallReport = onInstallReport
     this.activity = activity
     this.files = files
     this.routeConfig = routeConfig
@@ -216,7 +218,7 @@ export class BridgeServer {
     const known = pathname === '/bridge' || pathname === '/v1/files' || pathname.startsWith('/v1/files/')
       || pathname === '/v1/tasks' || pathname.startsWith('/v1/tasks/') || pathname === '/v1/capabilities'
       || pathname === '/v1/agents' || pathname === '/v1/activity' || pathname === '/v1/usage'
-      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/specify' || pathname === '/v1/poll' || pathname === '/v1/poll/status' || pathname === '/v1/observers' || pathname === '/v1/observe' || pathname === '/v1/review' || pathname === '/v1/shadow' || pathname === '/v1/initiatives' || pathname === '/v1/initiatives/decide' || pathname === '/v1/policy' || pathname === '/v1/policy/cancel' || pathname === '/v1/benefit' || pathname === '/v1/implement' || pathname === '/v1/deploy'
+      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/specify' || pathname === '/v1/poll' || pathname === '/v1/poll/status' || pathname === '/v1/observers' || pathname === '/v1/observe' || pathname === '/v1/review' || pathname === '/v1/shadow' || pathname === '/v1/initiatives' || pathname === '/v1/initiatives/decide' || pathname === '/v1/policy' || pathname === '/v1/policy/cancel' || pathname === '/v1/benefit' || pathname === '/v1/implement' || pathname === '/v1/deploy' || pathname === '/v1/install'
     if (!known) {
       send(404, { ok: false, error: 'not found' })
       return
@@ -248,6 +250,11 @@ export class BridgeServer {
       if (request.method === 'GET' && pathname === '/v1/agents') {
         send(200, { ok: true, contract: 2, agents: await this.agents?.() ?? [] })
         return
+      }
+      if (request.method === 'POST' && pathname === '/v1/install') {
+        if (!this.onInstallReport) return send(503, { ok: false, error: 'install report disabled' })
+        const payload = await this.#json(request)
+        return send(200, { ok: true, installed: this.onInstallReport(payload ?? {}) })
       }
       if (request.method === 'POST' && pathname === '/v1/deploy') {
         if (!this.onDeploy) return send(503, { ok: false, error: 'deploy disabled' })

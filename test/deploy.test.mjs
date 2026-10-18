@@ -105,3 +105,11 @@ test('install exception also rolls back', async () => {
   assert.equal(result.installed.state, 'rolled_back')
   assert.equal(rollbacks.length, 1)
 })
+
+test('manual install report accepts only the verified published SHA', async () => {
+  const { instance } = service()
+  const deployed = await instance.deploy({ requestId: 'REQ-0009', component: 'tenkrol/agent', branch: 'impl/REQ-0009-PLA-99', confirm: 'REQ-0009' })
+  assert.throws(() => instance.reportInstalled({ requestId: 'REQ-0009', component: 'tenkrol/agent', sha: 'f'.repeat(40), healthy: true }), /SHA/)
+  const reported = instance.reportInstalled({ requestId: 'REQ-0009', component: 'tenkrol/agent', sha: deployed.publishedSha, healthy: true, release: 'release-x' })
+  assert.equal(reported.state, 'healthy')
+})

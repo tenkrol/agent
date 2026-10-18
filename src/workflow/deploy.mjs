@@ -13,6 +13,7 @@ import { approvalProblems, manifestProblems, REQUEST_STATES } from './request-st
 const SHA = /^[0-9a-f]{40}$/i
 
 export function createDeployService({ components = [], git, loadRequest, baseDir, checks: runChecks = runCodeChecks, install, rollback, logger, timeoutMs = 900_000 } = {}) {
+  const pendingInstalls = new Map()
   return {
     async deploy({ requestId, component, branch, confirm, specRepo, specDir, keyPath } = {}) {
       if (!requestId || confirm !== requestId) throw new Error('нужно подтверждение: confirm должен совпадать с requestId')
@@ -67,6 +68,7 @@ export function createDeployService({ components = [], git, loadRequest, baseDir
         implementationCommit: result.implementationCommit, mergedSha, checkedSha: mergedSha, publishedSha,
         installed, at: new Date().toISOString(),
       }, null, 2)}\n`, 'utf8').catch(() => {})
+      pendingInstalls.set(`${requestId}:${component}`, { mergedSha, publishedSha, at: new Date().toISOString() })
       logger?.info?.('verified integration published', { requestId, component, mergedSha, installed: installed.state })
       return {
         requestId,
@@ -78,6 +80,16 @@ export function createDeployService({ components = [], git, loadRequest, baseDir
         installed,
         states: { merged: true, installation_required: installed.state === 'installation_required', installing: false, healthy: installed.state === 'healthy' },
       }
+    },
+
+    /** Ручная установка: подтвердить SHA и healthcheck, не выдавая merge за install. */
+    reportInstalled({ requestId, component, sha, healthy = false, release } = {}) {
+      const pending = pendingInstalls.get(`${requestId}:${component}`)
+      if (!pending) throw new Error('нет ожидающей установки для этой заявки')
+      if (sha !== pending.publishedSha || sha !== pending.mergedSha) throw new Error('SHA установки не совпадает с проверенным publishedSha')
+      const result = { requestId, component, sha, state: healthy ? 'healthy' : 'installed_unhealthy', healthy: Boolean(healthy), release, at: new Date().toISOString() }
+      if (healthy) pendingInstalls.delete(`${requestId}:${component}`)
+      return result
     },
   }
 }

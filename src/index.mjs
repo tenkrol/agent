@@ -480,6 +480,13 @@ async function main() {
         specDir: `${config.spec.dir}-approve`,
         keyPath: `${config.spec.keyDir}/assistant-work_ed25519`,
       }),
+      onInstallReport: (body) => deployService.reportInstalled({
+        requestId: String(body.requestId),
+        component: String(body.component),
+        sha: String(body.sha),
+        healthy: Boolean(body.healthy),
+        release: body.release,
+      }),
       onDeploy: (body) => deployService.deploy({
         requestId: String(body.requestId),
         component: String(body.component),
