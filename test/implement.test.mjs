@@ -38,6 +38,8 @@ test('implement runs DSH in an isolated checkout and pushes impl branches', asyn
     const run = calls.find((call) => call.kind === 'run')
     assert.match(run.task, /REQ-0009/)
     assert.match(run.workspaceDir, /REQ-0009\/agent$/)
+    assert.equal(run.maxSteps, 80)
+    assert.equal(run.tokenBudget, 800000)
     assert.ok(calls.some((call) => call.kind === 'push' && call.branch === 'impl/REQ-0009-PLA-99'))
   } finally {
     await fs.rm(root, { recursive: true, force: true })

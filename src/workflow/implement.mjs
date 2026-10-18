@@ -20,7 +20,7 @@ ${text}
 - если изменение уже реализовано, ничего не коммить;
 - в конце коротко перечисли изменённые файлы и проверки.`
 
-export function createImplementService({ components = [], git, runner, baseDir, timeoutMs, logger } = {}) {
+export function createImplementService({ components = [], git, runner, baseDir, timeoutMs, logger, maxSteps = 80, tokenBudget = 800_000 } = {}) {
   return {
     /** Прочитать заявку с ветки req/<requestId>. */
     async loadRequest({ requestId, specRepo, specDir, keyPath }) {
@@ -44,6 +44,8 @@ export function createImplementService({ components = [], git, runner, baseDir, 
           task: promptFor({ requestId, changeId: component.changeId, text: loaded.text, branch: component.branch }),
           workspaceDir: dir,
           timeoutMs,
+          maxSteps,
+          tokenBudget,
           signal,
         })
         if (!result?.ok) throw new Error(`DSH не смог реализовать ${component.changeId}: ${String(result?.text ?? result?.error ?? '').slice(0, 300)}`)
