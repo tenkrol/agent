@@ -1254,3 +1254,13 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - Осталось: выделить changeId, записать спеки в компонентные репозитории и обновить
   manifest заявки; затем E5.
 - Тесты: 479.
+
+## 2026-10-18: PLA-29 / E4 закрыт
+
+- release `release-20261018-130053` (анализ), затем fix `PLB-025`; сервис active.
+- `POST /v1/requests` и `/request`: draft заявки, анализ компонентов, вопрос при
+  неоднозначности, публикация веток `spec/<REQ>-<changeId>` в agent/assistant,
+  manifest с changeId/base/spec SHA.
+- Live: `REQ-0008` — `PLB-025` + `PLA-30`, заданные SHA, оба spec-check проходят;
+  в заявке manifest компоненты заполнены.
+- Тесты: 481. PLA-29 в архиве.
