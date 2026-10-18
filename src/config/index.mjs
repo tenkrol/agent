@@ -128,6 +128,21 @@ export function loadConfig(env = process.env) {
       repo: String(read(env, 'SPEC_REPO') ?? '').trim() || 'tenkrol/assistant-work',
       dir: String(read(env, 'SPEC_REPO_DIR') ?? '').trim() || '/var/lib/agent/repos/assistant-work',
       keyDir: String(read(env, 'GITHUB_KEY_DIR') ?? '').trim() || '/etc/agent/github',
+      attachSpecs: String(read(env, 'REQUEST_ATTACH_SPECS') ?? 'true').trim() !== 'false',
+      components: [
+        {
+          repository: 'tenkrol/agent',
+          dir: String(read(env, 'AGENT_REPO_DIR') ?? '').trim() || '/var/lib/agent/repos/tenkrol-agent',
+          keyPath: '/etc/agent/github/agent_ed25519',
+          domain: 'workflow',
+        },
+        {
+          repository: 'tenkrol/assistant',
+          dir: String(read(env, 'ASSISTANT_REPO_DIR') ?? '').trim() || '/var/lib/agent/repos/tenkrol-assistant',
+          keyPath: '/etc/agent/github/assistant_ed25519',
+          domain: 'agent-link',
+        },
+      ],
     },
     agentProfiles: {
       orchestrator: { provider: 'deepseek', model: String(read(env, 'ORCHESTRATOR_MODEL')).trim() || String(read(env, 'MODEL_NAME')).trim() },

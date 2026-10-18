@@ -35,6 +35,8 @@ import { runCodeChecks } from './execution/checks.mjs'
 import { createModelClient } from './integrations/model.mjs'
 import { createVerifyPorts } from './verification/ports.mjs'
 import { createRequestService } from './workflow/request-service.mjs'
+import { createComponentSpecService } from './workflow/component-specs.mjs'
+import { createGitHubClient } from './execution/git.mjs'
 import { ProceduresStore } from './storage/procedures.mjs'
 import { createProcedures } from './procedures/index.mjs'
 import { createSynthesizer } from './tools/tts.mjs'
@@ -195,11 +197,17 @@ async function main() {
     }),
   }
 
+  const componentSpecs = createComponentSpecService({
+    components: config.spec.components,
+    git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
+    logger,
+  })
   const requestService = createRequestService({
     repo: config.spec.repo,
     repoDir: config.spec.dir,
     keyDir: config.spec.keyDir,
     logger,
+    attachComponents: config.spec.attachSpecs ? (input) => componentSpecs.attach(input) : undefined,
   })
 
   /** @type {AgentBot} */

@@ -89,3 +89,30 @@ test('POST /v1/requests uses the request service', async () => {
     await server.stop()
   }
 })
+
+
+test('request service attaches component specs and updates manifest', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'req-attach-'))
+  try {
+    const repoDir = path.join(root, 'repo')
+    await fs.mkdir(path.join(repoDir, 'requests'), { recursive: true })
+    const commits = []
+    const service = createRequestService({
+      repo: 'tenkrol/assistant-work',
+      repoDir,
+      keyDir: root,
+      logger: { info() {}, warn() {} },
+      git: {
+        async clone() { return { dir: repoDir, sha: 'a'.repeat(40) } },
+        async commitAndPush(options) { commits.push(options); return { sha: 'b'.repeat(40), compareUrl: 'https://example/compare' } },
+      },
+      attachComponents: async () => [{ repository: 'tenkrol/agent', changeId: 'PLA-28', baseCommit: 'a'.repeat(40), specificationCommit: 'b'.repeat(40) }],
+    })
+    const result = await service.create({ text: 'Добавь команду агенту', title: 'Команда' })
+    assert.equal(result.analysis.attachments[0].changeId, 'PLA-28')
+    const manifest = JSON.parse(await fs.readFile(path.join(repoDir, 'requests', result.requestId, 'manifest.json'), 'utf8'))
+    assert.deepEqual(manifest.components.map((item) => item.changeId), ['PLA-28'])
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})

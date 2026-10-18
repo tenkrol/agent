@@ -17,7 +17,7 @@ const nextId = async (repoDir) => {
   return `REQ-${String((numbers.length ? Math.max(...numbers) : 0) + 1).padStart(4, '0')}`
 }
 
-export function createRequestService({ repo, repoDir, keyDir = '/etc/agent/github', logger, git = createGitHubClient({ keyDir, logger }), analyze = analyzeRequest } = {}) {
+export function createRequestService({ repo, repoDir, keyDir = '/etc/agent/github', logger, git = createGitHubClient({ keyDir, logger }), analyze = analyzeRequest, attachComponents } = {}) {
   return {
     async create({ text, title } = {}) {
       const clean = String(text ?? '').trim()
@@ -38,6 +38,23 @@ export function createRequestService({ repo, repoDir, keyDir = '/etc/agent/githu
       })
       await fs.writeFile(path.join(requestDir, 'analysis.json'), `${JSON.stringify(analysis, null, 2)}\n`, 'utf8')
       const branch = `req/${requestId}`
+      let attachments = []
+      if (attachComponents && !analysis.ambiguous && analysis.components.length > 0) {
+        try {
+          attachments = await attachComponents({ specs: analysis.specs, requestId, text: clean })
+          if (attachments.length > 0) {
+            const manifestPath = path.join(requestDir, 'manifest.json')
+            const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+            manifest.components = attachments
+            await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+          }
+        } catch (error) {
+          analysis.attachError = String(error?.message ?? error).slice(0, 300)
+          logger?.warn?.('component specs not attached', { requestId, error })
+        }
+      }
+      analysis.attachments = attachments
+      await fs.writeFile(path.join(requestDir, 'analysis.json'), `${JSON.stringify(analysis, null, 2)}\n`, 'utf8')
       const result = await git.commitAndPush({
         repo,
         dir: repoDir,
