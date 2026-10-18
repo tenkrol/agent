@@ -129,3 +129,23 @@ test('queued tasks survive closing and reopening the SQLite file', async () => {
     await fs.rm(dir, { recursive: true, force: true })
   }
 })
+
+test('accept commits terminal status and outbox atomically', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 't1', payload: { id: 't1' }, now: 1000 })
+    const claim = queue.claim({ owner: 'w1', ttlMs: 10_000, now: 1000 })
+    const accepted = queue.accept({
+      taskId: 't1', generation: claim.generation, owner: 'w1', status: 'done',
+      payload: { accepted: true },
+      outbox: { eventId: 't1:result:1', event: { eventId: 't1:result:1', text: 'ok' } },
+      now: 1100,
+    })
+    assert.equal(accepted.ok, true)
+    assert.equal(queue.get('t1').status, 'done')
+    const pending = queue.pendingOutbox()
+    assert.equal(pending.length, 1)
+    assert.equal(pending[0].event_id, 't1:result:1')
+    assert.equal(queue.markOutboxEnqueued('t1:result:1'), true)
+    assert.equal(queue.pendingOutbox().length, 0)
+  })
+})

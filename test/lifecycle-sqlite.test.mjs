@@ -138,3 +138,23 @@ test('recovery reconciles a terminal SQLite result with a stale JSONL record', a
     assert.equal(closed[0].patch.status, 'done')
   })
 })
+
+test('accept boundary marks the lease task done and stores outbox before delivery', async () => {
+  await withQueue(async (queue) => {
+    const journal = { get: () => ({ status: 'done' }) }
+    const lifecycle = createTaskLifecycle({ journal, queueStore: queue })
+    lifecycle.enqueue({ id: 'a', requestKey: 'a', payload: { id: 'a' } })
+    await lifecycle.drain({
+      runTask: async (job, context) => {
+        const result = context.accept({
+          status: 'done',
+          payload: { accepted: true },
+          outbox: { eventId: 'a:result:1', event: { eventId: 'a:result:1' } },
+        })
+        assert.equal(result.ok, true)
+      },
+    })
+    assert.equal(queue.get('a').status, 'done')
+    assert.equal(queue.pendingOutbox().length, 1)
+  })
+})

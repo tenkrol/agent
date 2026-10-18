@@ -157,7 +157,22 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
           job = state.queue.shift()
         }
         const leaseSignal = new AbortController()
+        let accepted = false
         const owns = () => !lease || queueStore.owns({ taskId: lease.id, generation: lease.generation, owner, now: now() })
+        const accept = (data = {}) => {
+          if (!lease || !queueStore) return { ok: false, unsupported: true }
+          const result = queueStore.accept({
+            taskId: lease.id,
+            generation: lease.generation,
+            owner,
+            status: data.status,
+            payload: data.payload,
+            outbox: data.outbox,
+            now: now(),
+          })
+          if (result.ok) accepted = true
+          return result
+        }
         const heartbeat = lease
           ? setInterval(() => {
             const renewed = queueStore.heartbeat({ taskId: lease.id, generation: lease.generation, owner, ttlMs: leaseTtlMs, now: now() })
@@ -166,8 +181,9 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
           : undefined
         heartbeat?.unref?.()
         try {
-          await runTask(job, { leaseSignal: leaseSignal.signal, owns })
+          await runTask(job, { leaseSignal: leaseSignal.signal, owns, ...(queueStore && lease ? { accept } : {}) })
           if (lease) {
+            if (accepted) continue
             if (!owns()) {
               // Старая попытка потеряла аренду: не пишем терминал и не доставляем.
               continue
@@ -180,9 +196,12 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
             }
           }
         } catch (error) {
-          if (lease && owns()) queueStore.complete({ taskId: lease.id, generation: lease.generation, owner, status: 'failed', now: now() })
-          if (onError) await onError(job, error)
-          else throw error
+          const stillOwns = owns()
+          if (lease && stillOwns) queueStore.complete({ taskId: lease.id, generation: lease.generation, owner, status: 'failed', now: now() })
+          if (stillOwns) {
+            if (onError) await onError(job, error)
+            else throw error
+          }
         } finally {
           clearInterval(heartbeat)
           leaseSignal.abort()

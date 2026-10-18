@@ -40,6 +40,14 @@ CREATE TABLE IF NOT EXISTS events (
   data TEXT
 );
 CREATE INDEX IF NOT EXISTS tasks_status_created ON tasks(status, created_at);
+CREATE TABLE IF NOT EXISTS outbox (
+  event_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  enqueued_at INTEGER
+);
 `
 
 const TERMINAL = new Set(['done', 'partial', 'failed', 'cancelled'])
@@ -219,6 +227,48 @@ export class SqliteTaskQueue {
   /** Отменить все queued: после этого claim их не выдаст. */
   cancelAll({ now = this.now() } = {}) {
     return this.db.prepare("UPDATE tasks SET status = 'cancelled', lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE status = 'queued'").run(now).changes
+  }
+
+  /**
+   * Атомарно принять результат: терминальный статус задачи + outbox в одной транзакции.
+   * Доставка после этого читает принятый outbox и не пересчитывает задачу.
+   */
+  accept({ taskId, generation, owner, status, payload, outbox, now = this.now() } = {}) {
+    if (!TERMINAL.has(status)) throw new Error('accept: нужен терминальный статус')
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = this.db.prepare(`
+        UPDATE tasks SET status = ?, payload = COALESCE(?, payload), lease_owner = NULL,
+          lease_until = NULL, updated_at = ?
+        WHERE id = ? AND generation = ? AND lease_owner = ? AND status = 'running' AND lease_until >= ?
+      `).run(status, payload === undefined ? null : JSON.stringify(payload), now, taskId, generation, owner, now)
+      if (result.changes === 0) {
+        this.db.exec('ROLLBACK')
+        return { ok: false, stale: true }
+      }
+      if (outbox) {
+        this.db.prepare(`INSERT OR REPLACE INTO outbox (event_id, task_id, payload, status, created_at) VALUES (?, ?, ?, 'pending', ?)`)
+          .run(outbox.eventId, taskId, JSON.stringify(outbox), now)
+      }
+      this.db.prepare('UPDATE attempts SET status = ? WHERE task_id = ? AND generation = ?').run(status, taskId, generation)
+      this.db.prepare('INSERT INTO events (task_id, generation, type, at, data) VALUES (?, ?, ?, ?, ?)')
+        .run(taskId, generation, 'accepted', now, JSON.stringify({ status, outbox: Boolean(outbox) }))
+      this.db.exec('COMMIT')
+      return { ok: true, stale: false }
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Принятые, но ещё не поставленные в доставку события. */
+  pendingOutbox({ limit = 50 } = {}) {
+    return this.db.prepare("SELECT * FROM outbox WHERE status = 'pending' ORDER BY created_at LIMIT ?").all(limit)
+      .map((row) => ({ ...row, payload: JSON.parse(row.payload) }))
+  }
+
+  markOutboxEnqueued(eventId, { now = this.now() } = {}) {
+    return this.db.prepare("UPDATE outbox SET status = 'enqueued', enqueued_at = ? WHERE event_id = ? AND status = 'pending'").run(now, eventId).changes > 0
   }
 
   /** Все незавершённые (queued/running) для восстановления без новых запросов. */

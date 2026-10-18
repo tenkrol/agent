@@ -57,3 +57,22 @@ test('losing the lease aborts the real runner signal and does not close the task
     await env.close()
   }
 })
+
+test('accepted outbox is re-enqueued after a crash before delivery', async () => {
+  const env = await createBotHarness({ runner: { async run() { return { ok: true, text: 'x', usage: { totalTokens: 1, steps: 1 } } } } })
+  try {
+    const enqueued = []
+    const marked = []
+    env.bot.delivery = { enqueue: async (event) => enqueued.push(event) }
+    env.bot.queueStore = {
+      pendingOutbox: () => [{ event_id: 'e1', task_id: 't1', payload: { event: { eventId: 'e1', type: 'result' } } }],
+      markOutboxEnqueued: (eventId) => marked.push(eventId),
+    }
+    await env.bot.recoverAcceptedOutbox()
+    assert.equal(enqueued.length, 1)
+    assert.equal(enqueued[0].eventId, 'e1')
+    assert.deepEqual(marked, ['e1'])
+  } finally {
+    await env.close()
+  }
+})

@@ -219,6 +219,16 @@ export class AgentBot {
     return this.lifecycle.snapshot().running
   }
 
+  /** Принятые SQLite-результаты, не попавшие в доставку до падения. */
+  async recoverAcceptedOutbox() {
+    if (!this.queueStore || !this.delivery?.enqueue) return
+    for (const row of this.queueStore.pendingOutbox()) {
+      await this.delivery.enqueue(row.payload.event)
+      this.queueStore.markOutboxEnqueued(row.event_id)
+      this.logger?.info('accepted outbox re-enqueued', { eventId: row.event_id, taskId: row.task_id })
+    }
+  }
+
   /** Prepare directories, identity and the polling cursor. */
   async start() {
     const { dir } = this.config.workspace
@@ -241,6 +251,7 @@ export class AgentBot {
       if (recovered > 0) this.logger?.info('delivery sending recovered', { count: recovered })
       this.delivery.start()
     }
+    await this.recoverAcceptedOutbox()?.catch?.((error) => this.logger?.warn('outbox recovery failed', { error }))
     if (this.schedules && this.config.schedules.enabled) {
       await this.schedules.load()
       // A restart must not fire a burst of missed runs: the next occurrence is
@@ -2750,7 +2761,7 @@ export class AgentBot {
 
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
     const resultFiles = job.route ? await this.registerResultFiles(job, outputs) : []
-    await this.reportResult({ job, result, statusMessageId, diskPaths, resultFiles, verification })
+    await this.reportResult({ job, result, status: statusKind, statusMessageId, diskPaths, resultFiles, verification, leaseContext })
     if (!job.route) {
       await this.sendOutputs({ job, outputs })
       await this.sendVoiceAnswer({ job, result })
@@ -2915,7 +2926,7 @@ export class AgentBot {
   }
 
   /** Answer text for the finished task. */
-  async reportResult({ job, result, statusMessageId, diskPaths = [], resultFiles = [], verification }) {
+  async reportResult({ job, result, status, statusMessageId, diskPaths = [], resultFiles = [], verification, leaseContext = {} }) {
     // Текст ответа собирает домен delivery: ядро передаёт только данные и числа.
     const cost = costOf(result.usage, this.pricingOptions())
     const usdText = formatUsd(cost.usd)
@@ -2943,14 +2954,21 @@ export class AgentBot {
       const summary = { text: String(result.text ?? '').trim(), files: resultFiles, version: job.resultVersion ?? 1 }
       await this.lifecycle.update(job.id, { resultSummary: summary, resultFiles })
       if (result.aborted || result.timedOut) return
-      await this.lifecycle.update(job.id, { resultSummary: summary, resultFiles })
-      await this.delivery?.enqueue(buildResultEvent({
+      const event = buildResultEvent({
         task: { ...job, route: job.route },
         text,
         files: resultFiles,
         version: job.resultVersion ?? 1,
         maxChars: this.config.delivery?.textChars ?? 3500,
-      }))
+      })
+      // Граница принятия: терминальный статус и outbox фиксируются атомарно в
+      // источнике истины до отправки. После этого доставка только читает outbox.
+      const accepted = leaseContext.accept?.({ status: status ?? 'done', payload: { summary, resultFiles }, outbox: { eventId: event.eventId, event } })
+      if (accepted && accepted.ok === false && accepted.unsupported !== true) {
+        this.logger?.warn('result not accepted by stale attempt', { taskId: job.id, stale: accepted.stale })
+        return
+      }
+      await this.delivery?.enqueue(event)
       return
     }
     const safeText = redactSecrets(text)
