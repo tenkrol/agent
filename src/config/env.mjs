@@ -208,6 +208,7 @@ export const DEFAULTS = {
   TIME_ZONE: '',
   LOG_LEVEL: 'info',
   SHUTDOWN_GRACE_MS: '10000',
+  INITIATIVE_DAILY_LIMIT: '3',
 }
 
 export const read = (env, key) => {

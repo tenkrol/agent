@@ -41,6 +41,8 @@ import { createRequestPoller } from './workflow/request-poller.mjs'
 import { createSpecifyService } from './workflow/specify.mjs'
 import { createObserverRegistry, createGithubSource, createServerSource } from './workflow/observers.mjs'
 import { createReviewService } from './workflow/review.mjs'
+import { createShadowStore } from './workflow/shadow.mjs'
+import { createInitiativeService } from './workflow/initiatives.mjs'
 import os from 'node:os'
 import { createDeployService } from './workflow/deploy.mjs'
 import { createGitHubClient } from './execution/git.mjs'
@@ -400,6 +402,15 @@ async function main() {
 
   const reviewService = createReviewService({ observe: () => observerRegistry.observe() })
 
+  const shadowStore = createShadowStore({ file: path.join(config.workspace.stateDir, 'shadow.json'), logger })
+  const initiativeService = createInitiativeService({
+    file: path.join(config.workspace.stateDir, 'initiatives.json'),
+    dailyLimit: config.initiatives?.dailyLimit ?? 3,
+    quietHours: config.initiatives?.quietHours ?? { from: 23, to: 8 },
+    timeZone: config.runtime.timeZone,
+    logger,
+  })
+
   const requestPoller = createRequestPoller({
     git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
     repo: config.spec.repo,
@@ -440,6 +451,11 @@ async function main() {
       observers: () => observerRegistry.sources(),
       onObserve: () => observerRegistry.observe(),
       onReview: () => reviewService.review(),
+      onShadowCollect: (suggestions) => shadowStore.collect(suggestions),
+      shadowStats: () => shadowStore.stats(),
+      onInitiatives: (suggestions) => initiativeService.propose(suggestions),
+      initiativeList: () => initiativeService.list(),
+      onInitiativeDecide: (id, decision) => initiativeService.decide(id, decision),
       onSpecify: (body) => specifyService.specify({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,

@@ -108,6 +108,11 @@ export class BridgeServer {
     observers,
     onObserve,
     onReview,
+    onShadowCollect,
+    shadowStats,
+    onInitiatives,
+    initiativeList,
+    onInitiativeDecide,
     onImplement,
     onDeploy,
     activity,
@@ -137,6 +142,11 @@ export class BridgeServer {
     this.observers = observers
     this.onObserve = onObserve
     this.onReview = onReview
+    this.onShadowCollect = onShadowCollect
+    this.shadowStats = shadowStats
+    this.onInitiatives = onInitiatives
+    this.initiativeList = initiativeList
+    this.onInitiativeDecide = onInitiativeDecide
     this.onImplement = onImplement
     this.onDeploy = onDeploy
     this.activity = activity
@@ -200,7 +210,7 @@ export class BridgeServer {
     const known = pathname === '/bridge' || pathname === '/v1/files' || pathname.startsWith('/v1/files/')
       || pathname === '/v1/tasks' || pathname.startsWith('/v1/tasks/') || pathname === '/v1/capabilities'
       || pathname === '/v1/agents' || pathname === '/v1/activity' || pathname === '/v1/usage'
-      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/specify' || pathname === '/v1/poll' || pathname === '/v1/poll/status' || pathname === '/v1/observers' || pathname === '/v1/observe' || pathname === '/v1/review' || pathname === '/v1/implement' || pathname === '/v1/deploy'
+      || pathname === '/v1/requests' || pathname === '/v1/approve' || pathname === '/v1/specify' || pathname === '/v1/poll' || pathname === '/v1/poll/status' || pathname === '/v1/observers' || pathname === '/v1/observe' || pathname === '/v1/review' || pathname === '/v1/shadow' || pathname === '/v1/initiatives' || pathname === '/v1/initiatives/decide' || pathname === '/v1/implement' || pathname === '/v1/deploy'
     if (!known) {
       send(404, { ok: false, error: 'not found' })
       return
@@ -241,6 +251,27 @@ export class BridgeServer {
       }
       if (request.method === 'GET' && pathname === '/v1/observers') {
         return send(200, { ok: true, sources: this.observers?.() ?? [] })
+      }
+      if (request.method === 'GET' && pathname === '/v1/shadow') {
+        return send(200, { ok: true, stats: await this.shadowStats?.() ?? {} })
+      }
+      if (request.method === 'POST' && pathname === '/v1/shadow') {
+        if (!this.onShadowCollect) return send(503, { ok: false, error: 'shadow disabled' })
+        const payload = await this.#json(request)
+        return send(200, { ok: true, added: await this.onShadowCollect(payload?.suggestions ?? []) })
+      }
+      if (request.method === 'GET' && pathname === '/v1/initiatives') {
+        return send(200, { ok: true, items: await this.initiativeList?.() ?? [] })
+      }
+      if (request.method === 'POST' && pathname === '/v1/initiatives/decide') {
+        if (!this.onInitiativeDecide) return send(503, { ok: false, error: 'initiatives disabled' })
+        const payload = await this.#json(request)
+        return send(200, { ok: true, item: await this.onInitiativeDecide(String(payload?.id), String(payload?.decision)) })
+      }
+      if (request.method === 'POST' && pathname === '/v1/initiatives') {
+        if (!this.onInitiatives) return send(503, { ok: false, error: 'initiatives disabled' })
+        const payload = await this.#json(request)
+        return send(200, { ok: true, chosen: await this.onInitiatives(payload?.suggestions ?? []) })
       }
       if (request.method === 'POST' && pathname === '/v1/review') {
         if (!this.onReview) return send(503, { ok: false, error: 'review disabled' })
