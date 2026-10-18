@@ -1264,3 +1264,13 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - Live: `REQ-0008` — `PLB-025` + `PLA-30`, заданные SHA, оба spec-check проходят;
   в заявке manifest компоненты заполнены.
 - Тесты: 481. PLA-29 в архиве.
+
+## 2026-10-18: PLA-31 / E5 закрыт
+
+- `POST /v1/implement`: заявка с `req/<REQ>`, компоненты на `spec/...`, DSH в
+  изолированном checkout, ветка `impl/<REQ>-<changeId>`.
+- Live: REQ-0009 / PLA-32 → `impl/REQ-0009-PLA-32` (`536463f`), DSH реально изменил
+  README/test/OpenSpec/HANDOFF; ветка запушена.
+- DSH-коммит и пустой commitAndPush больше не роняют поток; 485 тестов.
+- PR не создаётся через API: compare URL, нужен token/App.
+- release `release-20261018-183455`, active.
