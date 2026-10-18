@@ -261,9 +261,16 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
       if (queueStore && typeof journal?.recent === 'function') {
         const terminal = new Set(['done', 'partial', 'failed', 'cancelled'])
         for (const record of journal.recent(1000)) {
-          if (terminal.has(record.status)) continue
           const row = queueStore.get(record.id)
-          if (row && terminal.has(row.status)) {
+          if (!row) continue
+          if (terminal.has(record.status)) {
+            // Журнал уже принял результат, а очередь не успела: не перезапускать.
+            if (!terminal.has(row.status) && (row.status === 'queued' || row.status === 'running')) {
+              queueStore.reconcile({ taskId: record.id, status: record.status, now: now() })
+            }
+            continue
+          }
+          if (terminal.has(row.status)) {
             await journal.close(record.id, { status: row.status, reason: 'сверка с SQLite-очередью' }).catch(() => {})
           }
         }

@@ -290,6 +290,15 @@ export class SqliteTaskQueue {
     }
   }
 
+  /** Сверить статус с журналом после crash: без owner, только queued/running. */
+  reconcile({ taskId, status, now = this.now() } = {}) {
+    const result = this.db.prepare(`
+      UPDATE tasks SET status = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?
+      WHERE id = ? AND status IN ('queued', 'running')
+    `).run(status, now, taskId)
+    return result.changes > 0
+  }
+
   /** Принятые, но ещё не поставленные в доставку события. */
   pendingOutbox({ limit = 50 } = {}) {
     return this.db.prepare("SELECT * FROM outbox WHERE status = 'pending' ORDER BY created_at LIMIT ?").all(limit)

@@ -230,3 +230,20 @@ test('SQLite queue remains the source of truth when JSONL has no record (backup 
     assert.equal(claim.id, 'new-task')
   })
 })
+
+test('recovery reconciles a terminal JSONL result with a running SQLite task', async () => {
+  await withQueue(async (queue) => {
+    queue.enqueue({ id: 'a', requestKey: 'a', payload: { id: 'a' } })
+    queue.claim({ owner: 'w1', ttlMs: 60_000 })
+    const journal = {
+      recover: async () => [],
+      pending: () => [],
+      awaiting: () => [],
+      recent: () => [{ id: 'a', status: 'done' }],
+    }
+    const lifecycle = createTaskLifecycle({ journal, queueStore: queue })
+    await lifecycle.recover({ recordToJob: (record) => ({ id: record.id }), snapshot: async () => new Map(), workspaceDir: '/tmp' })
+    assert.equal(queue.get('a').status, 'done')
+    assert.equal(queue.claim({ owner: 'w2' }), undefined)
+  })
+})
