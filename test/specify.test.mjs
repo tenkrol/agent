@@ -14,6 +14,7 @@ async function setup() {
   const specDir = path.join(root, 'spec')
   await fs.mkdir(path.join(specDir, 'requests', 'REQ-1'), { recursive: true })
   await fs.mkdir(path.join(specDir, 'requests', 'REQ-2'), { recursive: true })
+  await fs.writeFile(path.join(specDir, 'requests', 'REQ-1', 'manifest.json'), JSON.stringify({ requestId: 'REQ-1', revision: 1, components: [{ repository: 'tenkrol/agent', changeId: 'PLA-99', baseCommit: SHA_A, specificationCommit: SHA_B, branch: 'spec/REQ-1-PLA-99' }] }))
   const calls = []
   const git = {
     async clone(options) { calls.push({ kind: 'clone', ...options }); return { sha: SHA_B } },
@@ -45,6 +46,8 @@ test('specify runs DSH research, publishes spec branch and marks ready', async (
     const status = JSON.parse(await fs.readFile(path.join(ctx.specDir, 'requests', 'REQ-1', 'status.json'), 'utf8'))
     assert.equal(status.state, 'ready')
     assert.equal(status.specs[0].changeId, 'PLA-99')
+    const manifest = JSON.parse(await fs.readFile(path.join(ctx.specDir, 'requests', 'REQ-1', 'manifest.json'), 'utf8'))
+    assert.equal(manifest.components[0].specificationCommit, SHA_C, 'manifest ссылается на ready SHA')
   } finally {
     await fs.rm(ctx.root, { recursive: true, force: true })
   }

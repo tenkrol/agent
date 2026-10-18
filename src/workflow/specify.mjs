@@ -65,6 +65,14 @@ export function createSpecifyService({ components = [], git, runner, baseDir, lo
         specs.push({ repository: component.repository, changeId: component.changeId, branch: component.branch ?? `spec/${requestId}-${component.changeId}`, specificationCommit: pushed.sha })
         logger?.info?.('ready specification published', { requestId, changeId: component.changeId })
       }
+      // Согласование должно ссылаться на готовые SHA, а не на исходный каркас.
+      const manifestPath = path.join(specDir, 'requests', requestId, 'manifest.json')
+      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+      manifest.components = (manifest.components ?? []).map((component) => {
+        const ready = specs.find((item) => item.repository === component.repository && item.changeId === component.changeId)
+        return ready ? { ...component, specificationCommit: ready.specificationCommit } : component
+      })
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
       const questionsPath = path.join(specDir, 'requests', requestId, 'questions.md')
       const questions = await fs.readFile(questionsPath, 'utf8').catch(() => undefined)
       await fs.writeFile(path.join(specDir, 'requests', requestId, 'status.json'), `${JSON.stringify({
