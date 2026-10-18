@@ -12,7 +12,7 @@ import { approvalProblems, manifestProblems, REQUEST_STATES } from './request-st
 
 const SHA = /^[0-9a-f]{40}$/i
 
-export function createDeployService({ components = [], git, loadRequest, baseDir, checks: runChecks = runCodeChecks, install, logger, timeoutMs = 900_000 } = {}) {
+export function createDeployService({ components = [], git, loadRequest, baseDir, checks: runChecks = runCodeChecks, install, rollback, logger, timeoutMs = 900_000 } = {}) {
   return {
     async deploy({ requestId, component, branch, confirm, specRepo, specDir, keyPath } = {}) {
       if (!requestId || confirm !== requestId) throw new Error('нужно подтверждение: confirm должен совпадать с requestId')
@@ -49,9 +49,18 @@ export function createDeployService({ components = [], git, loadRequest, baseDir
 
       let installed = { state: 'installation_required', required: true, command: 'bash deploy/install-remote.sh (владелец/root)' }
       if (install) {
-        installed = await install({ repository: component, sha: publishedSha, requestId })
-        if (!installed?.healthy) installed = { ...installed, state: 'installation_failed' }
-        else installed = { ...installed, state: 'healthy' }
+        try {
+          installed = await install({ repository: component, sha: publishedSha, requestId })
+          if (!installed?.healthy) {
+            await rollback?.({ repository: component, sha: publishedSha, requestId, reason: 'healthcheck failed' })
+            installed = { ...installed, state: 'rolled_back', ok: false }
+          } else {
+            installed = { ...installed, state: 'healthy', ok: true }
+          }
+        } catch (error) {
+          await rollback?.({ repository: component, sha: publishedSha, requestId, reason: String(error?.message ?? error) })
+          installed = { state: 'rolled_back', ok: false, error: String(error?.message ?? error).slice(0, 200) }
+        }
       }
       if (specDir) await fs.writeFile(path.join(specDir, 'requests', requestId, 'release.json'), `${JSON.stringify({
         requestId, revision: manifest.revision, component, branch: result.branch,

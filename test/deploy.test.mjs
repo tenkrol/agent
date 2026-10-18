@@ -80,3 +80,28 @@ test('install result is reported separately from merge', async () => {
   assert.equal(result.installed.state, 'healthy')
   assert.equal(result.states.healthy, true)
 })
+
+
+test('unhealthy install rolls back and never reports healthy', async () => {
+  const rollbacks = []
+  const { instance } = service({
+    install: async () => ({ healthy: false, error: 'healthcheck failed' }),
+    rollback: async (input) => { rollbacks.push(input) },
+  })
+  const result = await instance.deploy({ requestId: 'REQ-0009', component: 'tenkrol/agent', branch: 'impl/REQ-0009-PLA-99', confirm: 'REQ-0009' })
+  assert.equal(result.installed.state, 'rolled_back')
+  assert.equal(result.installed.ok, false)
+  assert.equal(result.states.healthy, false)
+  assert.equal(rollbacks.length, 1)
+})
+
+test('install exception also rolls back', async () => {
+  const rollbacks = []
+  const { instance } = service({
+    install: async () => { throw new Error('installer crashed') },
+    rollback: async (input) => { rollbacks.push(input) },
+  })
+  const result = await instance.deploy({ requestId: 'REQ-0009', component: 'tenkrol/agent', branch: 'impl/REQ-0009-PLA-99', confirm: 'REQ-0009' })
+  assert.equal(result.installed.state, 'rolled_back')
+  assert.equal(rollbacks.length, 1)
+})
