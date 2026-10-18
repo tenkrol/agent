@@ -38,7 +38,7 @@ test('github source reads HEAD through the git client', async () => {
     repos: ['tenkrol/agent'],
     dirRoot: '/tmp/obs',
   })
-  assert.deepEqual(await source.fetch(), [{ repo: 'tenkrol/agent', sha: 'a'.repeat(40) }])
+  assert.deepEqual(await source.read(), [{ repo: 'tenkrol/agent', sha: 'a'.repeat(40) }])
   assert.equal(calls[0].branch, 'main')
 })
 
