@@ -10,6 +10,8 @@ const nextId = async (repoDir) => {
   const names = await fs.readdir(path.join(repoDir, 'requests')).catch(() => [])
   const branchDirs = [path.join(repoDir, '.git', 'refs', 'remotes', 'origin', 'req'), path.join(repoDir, '.git', 'refs', 'heads', 'req')]
   for (const branchDir of branchDirs) names.push(...await fs.readdir(branchDir).catch(() => []))
+  const packed = await fs.readFile(path.join(repoDir, '.git', 'packed-refs'), 'utf8').catch(() => '')
+  for (const match of packed.matchAll(/refs\/remotes\/origin\/req\/(REQ-\d+)/g)) names.push(match[1])
   const numbers = names.map((name) => /^REQ-(\d{4,})/.exec(name)).filter(Boolean).map((match) => Number(match[1]))
   return `REQ-${String((numbers.length ? Math.max(...numbers) : 0) + 1).padStart(4, '0')}`
 }
