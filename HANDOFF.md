@@ -1210,3 +1210,12 @@ Merge/деплой PLA-23 не выполнялись.
 - Ветки компонентов: `e3-req-0002-agent` (PLA-28), `e3-req-0002-assistant` (PLB-016);
   compare-ссылки готовы, PR через API пока не создаётся (нужен token/App).
 - Инструменты E3: request-manifest, request-new, spec-sync, execution/git.
+
+## 2026-10-18: E3/E4 в production, release 085724
+
+- `POST /v1/requests` (E4) опубликован: создаёт draft-заявку, push ветки `req/REQ-*`;
+  live создан `REQ-0003` (compare: assistant-work/compare/main...req/REQ-0003).
+- По пути исправлены два production-бага: `config.spec` отсутствовал (restart loop),
+  затем `String(undefined)` давал путь `undefined`; сейчас config defaults корректны.
+- `agentProfiles` и `config.spec` добавлены в loadConfig.
+- E3: repo/keys/requests работают; PR через API всё ещё требует token/App.
