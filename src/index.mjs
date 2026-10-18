@@ -40,6 +40,7 @@ import { createImplementService } from './workflow/implement.mjs'
 import { createRequestPoller } from './workflow/request-poller.mjs'
 import { createSpecifyService } from './workflow/specify.mjs'
 import { createObserverRegistry, createGithubSource, createServerSource } from './workflow/observers.mjs'
+import { createReviewService } from './workflow/review.mjs'
 import os from 'node:os'
 import { createDeployService } from './workflow/deploy.mjs'
 import { createGitHubClient } from './execution/git.mjs'
@@ -397,6 +398,8 @@ async function main() {
     logger,
   })
 
+  const reviewService = createReviewService({ observe: () => observerRegistry.observe() })
+
   const requestPoller = createRequestPoller({
     git: createGitHubClient({ keyDir: config.spec.keyDir, logger }),
     repo: config.spec.repo,
@@ -436,6 +439,7 @@ async function main() {
       pollStatus: () => requestPoller.status(),
       observers: () => observerRegistry.sources(),
       onObserve: () => observerRegistry.observe(),
+      onReview: () => reviewService.review(),
       onSpecify: (body) => specifyService.specify({
         requestId: String(body.requestId),
         specRepo: config.spec.repo,
