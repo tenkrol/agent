@@ -345,7 +345,7 @@ async function main() {
         {
           id: 'orchestrator',
           capabilities: ['tasks', 'lifecycle', 'budget'],
-          modelProfile: botConfig.agentProfiles?.orchestrator?.model,
+          modelProfile: bot.config.agentProfiles?.orchestrator?.model,
           status: 'ready',
         },
         ...(bot.orchestrator?.registry?.describe?.() ?? []),
