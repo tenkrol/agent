@@ -451,6 +451,29 @@ export class AgentBot {
     return first === undefined ? undefined : first
   }
 
+  /**
+   * Записать событие активности задачи с проверенным владельцем и областью.
+   *
+   * `userId` и `scopeId` берутся из самой задачи (`job`), а не из текста или
+   * аргументов модели: по ним бот-ассистент решает, кому показывать поручение.
+   * Для задачи из моста это чат владельца, для задачи из Telegram — автор
+   * обновления, уже прошедший allow-list.
+   *
+   * @param {object} job - задача очереди.
+   * @param {object} event - тип и данные события.
+   * @returns {object|undefined} записанное событие.
+   */
+  recordActivity(job, event = {}) {
+    const userId = job?.userId
+    const scopeId = job?.scopeId ?? job?.chatId
+    return this.activity?.record?.({
+      taskId: job?.id,
+      ...(userId === undefined || userId === null ? {} : { userId }),
+      ...(scopeId === undefined || scopeId === null || scopeId === '' ? {} : { scopeId: String(scopeId) }),
+      ...event,
+    })
+  }
+
   /** Stop polling, kill the running task and flush the stores. */
   async stop() {
     this.stopping = true
@@ -1476,7 +1499,7 @@ export class AgentBot {
           if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage) => {
-          this.activity?.record?.({ type: 'model_usage', taskId: job.id, agent: 'quick', tokens: usage?.totalTokens, unknown: usage?.totalTokens === undefined })
+          this.recordActivity(job, { type: 'model_usage', agent: 'quick', tokens: usage?.totalTokens, unknown: usage?.totalTokens === undefined })
           if ((usage?.totalTokens ?? 0) > 0) {
             this.usage.record({
               usage: toProviderUsage(usage),
@@ -2129,7 +2152,7 @@ export class AgentBot {
       }
     }
     if (!job._queuedByLifecycle) this.lifecycle.enqueue(job)
-    this.activity?.record?.({ type: 'queued', taskId: job.id, chatId: job.chatId, userId: job.userId, agent: job.route ? 'dsh' : 'dsh' })
+    this.recordActivity(job, { type: 'queued', chatId: job.chatId, agent: job.route ? 'dsh' : 'dsh' })
     if (this.running) {
       await this.safeSend(job.chatId, `📋 Принял, задача ${job.id} в очереди (позиция ${this.queue.length}).`)
     }
@@ -2476,7 +2499,7 @@ export class AgentBot {
       const result = await this.implementer({ requestId: job.requestId, retry: Boolean(job.retry), signal: controller.signal })
       if (stale()) return
       await this.lifecycle.finishTask(job.id, { status: STATUS.done, reason: 'implemented' })
-      this.activity?.record?.({ type: 'implemented', taskId: job.id, requestId: job.requestId, state: result?.state, revision: job.revision })
+      this.recordActivity(job, { type: 'implemented', requestId: job.requestId, state: result?.state, revision: job.revision })
       if (job.chatId !== undefined) await this.safeSend(job.chatId, `✅ Заявка ${job.requestId}: реализация опубликована (${(result?.results ?? []).map((item) => item.branch).join(', ')})`)
     } catch (error) {
       this.logger?.warn?.('implementation job failed', { taskId: job.id, requestId: job.requestId, error: String(error?.message ?? error) })
@@ -2718,7 +2741,7 @@ export class AgentBot {
       startedAt,
       attemptId: `${job.id}-1`,
     })
-    this.activity?.record?.({ type: 'started', taskId: job.id, chatId: job.chatId, agent: 'dsh', stage: 'executing' })
+    this.recordActivity(job, { type: 'started', chatId: job.chatId, agent: 'dsh', stage: 'executing' })
     this.progress = { steps: 0, tool: '', sessionId }
     const progressTimer = setInterval(() => {
       void this.publishProgress(statusMessageId, job)
@@ -2767,7 +2790,7 @@ export class AgentBot {
           if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage, info) => {
-          this.activity?.record?.({ type: 'model_usage', taskId: job.id, agent: 'dsh', role: info?.executorId ?? job.agentRole ?? 'dsh', provider: 'deepseek', model: this.config.agentProfiles?.[info?.executorId]?.model ?? this.config.model?.name, stage: info?.stage, tokens: usage?.totalTokens, unknown: Boolean(info?.unknown || usage?.totalTokens === undefined) })
+          this.recordActivity(job, { type: 'model_usage', agent: 'dsh', role: info?.executorId ?? job.agentRole ?? 'dsh', provider: 'deepseek', model: this.config.agentProfiles?.[info?.executorId]?.model ?? this.config.model?.name, stage: info?.stage, tokens: usage?.totalTokens, unknown: Boolean(info?.unknown || usage?.totalTokens === undefined) })
           if (info?.unknown || usage?.totalTokens === undefined) usageUnknown = true
           addUsage(usage)
           if ((usage?.totalTokens ?? 0) > 0 || (usage?.steps ?? 0) > 0) {
@@ -2923,7 +2946,7 @@ export class AgentBot {
       return
     }
     const stoppedByShutdown = statusKind === STATUS.interrupted
-    this.activity?.record?.({ type: 'completed', taskId: job.id, agent: 'dsh', status: statusKind, tokens: spent.totalTokens, usd: cost.usd })
+    this.recordActivity(job, { type: 'completed', agent: 'dsh', status: statusKind, tokens: spent.totalTokens, usd: cost.usd })
     await this.lifecycle.finishTask(job.id, {
       status: statusKind,
       verification,
@@ -2938,7 +2961,7 @@ export class AgentBot {
     const diskPaths = await this.uploadToDisk({ job, outputs, silent: brief })
     const resultFiles = job.route ? await this.registerResultFiles(job, outputs) : []
     await this.reportResult({ job, result, status: statusKind, statusMessageId, diskPaths, resultFiles, verification, leaseContext, outputs })
-    this.activity?.record?.({ type: 'delivered', taskId: job.id, agent: 'dsh', status: statusKind })
+    this.recordActivity(job, { type: 'delivered', agent: 'dsh', status: statusKind })
     if (!job.route) {
       await this.sendOutputs({ job, outputs })
       await this.sendVoiceAnswer({ job, result })

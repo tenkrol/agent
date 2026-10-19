@@ -7,6 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { ActivityStore } from '../src/storage/activity.mjs'
+import { AgentBot } from '../src/core/bot.mjs'
 import { createBridgeServer } from '../src/bot-link/bridge-http.mjs'
 import { createTestLogger } from './helpers.mjs'
 
@@ -47,6 +48,56 @@ test('GET /v1/agents and /v1/activity require the token and return data', async 
     const activity = await fetch(`${url}/v1/activity?limit=5`, { headers: { authorization: 'Bearer secret' } })
     assert.equal(activity.status, 200)
     assert.equal((await activity.json()).events[0].taskId, 't1')
+  } finally {
+    await server.stop()
+  }
+})
+
+test('событие задачи несёт владельца и область из проверенного job, а не из текста', async () => {
+  const recorded = []
+  const host = { activity: { record: (event) => { recorded.push(event); return event } } }
+  AgentBot.prototype.recordActivity.call(
+    host,
+    { id: 't1', userId: 433296567, chatId: 433296567 },
+    { type: 'completed', status: 'done' },
+  )
+  assert.deepEqual(recorded[0], {
+    taskId: 't1',
+    userId: 433296567,
+    scopeId: '433296567',
+    type: 'completed',
+    status: 'done',
+  })
+
+  // Без проверенного userId событие не получает владельца и остаётся
+  // кандидатом на фильтр «у задачи нет проверенного владельца».
+  AgentBot.prototype.recordActivity.call(host, { id: 't2', chatId: 1 }, { type: 'completed', taskId: 't2' })
+  assert.equal(recorded[1].userId, undefined)
+  assert.equal(recorded[1].scopeId, '1')
+})
+
+test('GET /v1/activity отдаёт userId и scopeId задачи', async () => {
+  const server = createBridgeServer({
+    token: 'secret',
+    port: 0,
+    logger: createTestLogger(),
+    onSubmit: async () => ({ taskId: 'x' }),
+    activity: () => [{
+      type: 'completed',
+      taskId: 't1',
+      userId: 433296567,
+      scopeId: '433296567',
+    }],
+  })
+  const address = await server.start()
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/activity`, {
+      headers: { authorization: 'Bearer secret' },
+    })
+    assert.equal(response.status, 200)
+    const [event] = (await response.json()).events
+    assert.equal(event.userId, 433296567)
+    assert.equal(event.scopeId, '433296567')
   } finally {
     await server.stop()
   }
