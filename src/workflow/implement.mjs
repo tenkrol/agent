@@ -23,6 +23,9 @@ ${text}
 - в конце коротко перечисли изменённые файлы и проверки.`
 
 export function createImplementService({ components = [], git, runner, baseDir, timeoutMs, logger, maxSteps = 100, tokenBudget = 2_500_000, maxRepairs = 2, runChecks = runCodeChecks } = {}) {
+  const throwIfCancelled = (signal) => {
+    if (signal?.aborted) throw Object.assign(new Error('реализация отменена'), { name: 'AbortError', code: 'ABORT_ERR' })
+  }
   return {
     /** Прочитать заявку с ветки req/<requestId>. */
     async loadRequest({ requestId, specRepo, specDir, keyPath }) {
@@ -58,6 +61,7 @@ export function createImplementService({ components = [], git, runner, baseDir, 
       const results = []
       try {
       for (const component of loaded.manifest.components ?? []) {
+        throwIfCancelled(signal)
         const target = components.find((item) => item.repository === component.repository)
         if (!target) throw new Error(`нет настроенного компонента ${component.repository}`)
         const dir = path.join(baseDir, requestId, component.repository.split('/').pop())
@@ -74,7 +78,9 @@ export function createImplementService({ components = [], git, runner, baseDir, 
           signal,
         })
         if (!result?.ok) throw new Error(`DSH не смог реализовать ${component.changeId}: ${String(result?.text ?? result?.error ?? '').slice(0, 300)}`)
+        throwIfCancelled(signal)
         let checks = await runChecks({ root: dir, cwd: dir, commands: target.checks ?? [], timeoutMs, signal })
+        throwIfCancelled(signal)
         let repairs = 0
         const failed = (result) => (result.checks ?? []).some((check) => check.exitCode !== 0 || check.error)
         while (failed(checks) && repairs < maxRepairs) {
@@ -90,9 +96,12 @@ export function createImplementService({ components = [], git, runner, baseDir, 
           })
           repairs += 1
           if (!repaired?.ok) break
+          throwIfCancelled(signal)
           checks = await runChecks({ root: dir, cwd: dir, commands: target.checks ?? [], timeoutMs, signal })
+          throwIfCancelled(signal)
         }
         if (failed(checks)) throw new Error(`проверки не прошли: ${(checks.checks ?? []).filter((check) => check.exitCode !== 0 || check.error).map((check) => check.command).join(', ')}`)
+        throwIfCancelled(signal)
         const pushed = await git.commitAndPush({
           repo: component.repository,
           dir,
@@ -114,9 +123,18 @@ export function createImplementService({ components = [], git, runner, baseDir, 
         logger?.info?.('request implemented', { requestId, changeId: component.changeId, branch })
       }
       } catch (error) {
-        await this.saveStatus({ requestId, specRepo, specDir, keyPath, state: REQUEST_STATES.failed, extra: { error: String(error?.message ?? error).slice(0, 300) } }).catch(() => {})
+        const cancelled = signal?.aborted || error?.name === 'AbortError'
+        await this.saveStatus({
+          requestId,
+          specRepo,
+          specDir,
+          keyPath,
+          state: cancelled ? REQUEST_STATES.cancelled : REQUEST_STATES.failed,
+          extra: { error: String(error?.message ?? error).slice(0, 300) },
+        }).catch(() => {})
         throw error
       }
+      throwIfCancelled(signal)
       await this.saveStatus({
         requestId,
         specRepo,

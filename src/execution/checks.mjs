@@ -9,6 +9,8 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+const cancelled = () => Object.assign(new Error('проверка отменена'), { name: 'AbortError', code: 'ABORT_ERR' })
+
 async function insideRoot(root, cwd) {
   const base = await fs.realpath(String(root))
   const target = await fs.realpath(path.resolve(base, String(cwd ?? '.'))).catch(() => path.resolve(base, String(cwd ?? '.')))
@@ -63,6 +65,7 @@ const runOne = (argv, { cwd, timeoutMs, signal }) => new Promise((resolve) => {
 export async function runCodeChecks({ root, cwd = root, commands = [], timeoutMs = 300_000, signal } = {}) {
   if (!Array.isArray(commands) || commands.length === 0) return { checks: [] }
   if (!(await insideRoot(root, cwd))) throw new Error('cwd вне рабочей папки задачи')
+  if (signal?.aborted) throw cancelled()
   const checks = []
   for (const command of commands) {
     const argv = Array.isArray(command) ? command : []
@@ -70,8 +73,10 @@ export async function runCodeChecks({ root, cwd = root, commands = [], timeoutMs
       checks.push({ command: argv.join(' '), exitCode: null, stdout: '', stderr: '', error: 'пустая команда' })
       continue
     }
-    if (signal?.aborted) break
-    checks.push(await runOne(argv, { cwd, timeoutMs, signal }))
+    if (signal?.aborted) throw cancelled()
+    const check = await runOne(argv, { cwd, timeoutMs, signal })
+    if (check.aborted || signal?.aborted) throw cancelled()
+    checks.push(check)
   }
   return { checks }
 }

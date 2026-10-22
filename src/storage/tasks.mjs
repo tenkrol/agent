@@ -96,6 +96,10 @@ export function assertTransition(from, to) {
 
 /** Fields that make a queued record re-runnable after a restart. */
 const JOB_FIELDS = [
+  'kind',
+  'requestId',
+  'revision',
+  'retry',
   'chatId',
   'userId',
   'text',

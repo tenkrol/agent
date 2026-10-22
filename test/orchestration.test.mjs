@@ -51,6 +51,35 @@ test('cancel during repair stops the active attempt and never reports done', asy
   assert.equal(run, 2)
 })
 
+test('repair keeps the isolated workspace of the original attempt', async () => {
+  const workspaces = []
+  let run = 0
+  const executor = {
+    id: 'dsh',
+    execute: async ({ workspaceDir }) => {
+      workspaces.push(workspaceDir)
+      run += 1
+      return { ok: true, text: run === 1 ? 'черновик' : 'исправлено', usage: usage(10) }
+    },
+  }
+  let checks = 0
+  const orchestrator = createOrchestrator({
+    executors: [executor],
+    verifier: verifier(1),
+    verify: async () => ++checks === 1
+      ? { status: 'failed', criteria: [{ id: 'content', status: 'failed', evidence: 'исправьте файл' }] }
+      : { status: 'passed', criteria: [] },
+  })
+  const outcome = await orchestrator.run({
+    job: { id: 'isolated' },
+    task: 'сделай файл',
+    workspaceDir: '/tmp/workspace/tasks/isolated',
+    signal: new AbortController().signal,
+  })
+  assert.equal(outcome.attempts, 1)
+  assert.deepEqual(workspaces, ['/tmp/workspace/tasks/isolated', '/tmp/workspace/tasks/isolated'])
+})
+
 test('repair gets only the remaining token budget', async () => {
   const budgets = []
   let run = 0

@@ -19,6 +19,9 @@ export function createTaskLifecycle({ journal, stateStore, queueStore, now = () 
     get running() {
       return [...state.runs.values()][0]
     },
+    runningFor(id) {
+      return state.runs.get(id)
+    },
     get length() {
       return state.queue.length
     },

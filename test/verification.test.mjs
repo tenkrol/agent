@@ -247,6 +247,20 @@ test('code checks never use a shell and reject cwd outside root', async () => {
   }
 })
 
+test('cancelled code checks fail explicitly instead of looking green', async () => {
+  const dir = await tempDir()
+  const controller = new AbortController()
+  controller.abort()
+  try {
+    await assert.rejects(
+      () => runCodeChecks({ root: dir, commands: [[process.execPath, '-e', 'process.exit(0)']], signal: controller.signal }),
+      (error) => error.name === 'AbortError',
+    )
+  } finally {
+    await cleanup(dir)
+  }
+})
+
 test('an already cancelled signal stops verification before any port', async () => {
   const controller = new AbortController()
   controller.abort()

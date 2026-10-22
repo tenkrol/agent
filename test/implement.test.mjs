@@ -134,6 +134,30 @@ test('red checks block publication and keep failed state', async () => {
   }
 })
 
+test('cancellation before checks never publishes and records cancelled', async () => {
+  const ctx = await setup()
+  const controller = new AbortController()
+  try {
+    const pushes = []
+    const git = { ...ctx.git, async commitAndPush(options) { pushes.push(options); return { sha: SHA_C, compareUrl: 'x' } } }
+    const impl = service(git, {
+      async run() {
+        controller.abort()
+        return { ok: true, usage: {} }
+      },
+    })
+    await assert.rejects(
+      () => impl.implement({ requestId: 'REQ-0009', specRepo: 'x', specDir: ctx.specDir, keyPath: '/tmp/key', signal: controller.signal }),
+      (error) => error.name === 'AbortError',
+    )
+    assert.ok(!pushes.some((push) => push.branch?.startsWith('impl/')))
+    const status = JSON.parse(await fs.readFile(path.join(ctx.dir, 'status.json'), 'utf8'))
+    assert.equal(status.state, 'cancelled')
+  } finally {
+    await fs.rm(ctx.root, { recursive: true, force: true })
+  }
+})
+
 test('verified request rejects a second attempt unless retry is explicit', async () => {
   const ctx = await setup({ status: 'verified' })
   try {

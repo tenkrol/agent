@@ -7,6 +7,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { STATUS, TaskJournal } from '../src/storage/tasks.mjs'
 import { createBotHarness, createTestLogger } from './helpers.mjs'
+import { prepareTaskWorkspace } from '../src/execution/workspace.mjs'
 
 test('accepted tasks survive a restart and run in their original order', async () => {
   const calls = []
@@ -28,6 +29,34 @@ test('accepted tasks survive a restart and run in their original order', async (
     assert.equal(env.journal.get('q1').status, STATUS.done)
     assert.equal(env.journal.get('q2').status, STATUS.done)
     assert.ok(env.platform.sent.some((entry) => /Восстановил принятые задачи: 2/.test(entry.markdown)))
+  } finally {
+    await env.close()
+  }
+})
+
+test('startup pruning keeps an old workspace of an unfinished task', async () => {
+  let artifact
+  const env = await createBotHarness({
+    configEnv: { WORKSPACE_PER_TASK: 'true', OUTPUT_RETENTION_DAYS: '1' },
+    seedJournal: async ({ journal, config }) => {
+      // Отдельный объект имитирует журнал предыдущего процесса: новый ещё не загружен.
+      const previous = new TaskJournal({ file: journal.file })
+      await previous.openQueued({ id: 'awaiting-old', chatId: 42, userId: 42, text: 'сделай документ', attachments: [] })
+      await previous.transition('awaiting-old', STATUS.running)
+      await previous.transition('awaiting-old', STATUS.awaiting_owner, {
+        patch: { askedAt: Date.now(), question: 'Уточните формат' },
+      })
+      await previous.flush()
+      const workspace = await prepareTaskWorkspace(config.workspace.dir, 'awaiting-old', { perTask: true })
+      artifact = path.join(workspace, 'outbox', 'draft.txt')
+      await fs.writeFile(artifact, 'нужный черновик')
+      const old = new Date(Date.now() - 3 * 24 * 3600 * 1000)
+      await fs.utimes(workspace, old, old)
+    },
+  })
+  try {
+    assert.equal(env.journal.get('awaiting-old').status, STATUS.awaiting_owner)
+    assert.equal(await fs.readFile(artifact, 'utf8'), 'нужный черновик')
   } finally {
     await env.close()
   }

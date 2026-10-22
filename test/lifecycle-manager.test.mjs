@@ -108,6 +108,7 @@ test('begin/finish own the active controller and retry requeues then enqueues', 
   assert.equal(lifecycle.snapshot().running.id, 't1')
   lifecycle.begin({ id: 't2', controller: new AbortController() })
   assert.equal(lifecycle.snapshot().runningCount, 2)
+  assert.equal(lifecycle.runningFor('t1').controller, controller)
   lifecycle.cancelRunning()
   assert.equal(controller.signal.aborted, true)
   lifecycle.finish()

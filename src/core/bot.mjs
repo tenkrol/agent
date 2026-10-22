@@ -261,6 +261,7 @@ export class AgentBot {
     this.deniedAt = new Map()
     this.pollController = undefined
     this.stopping = false
+    this.workerRuns = new Set()
     this.worker = Promise.resolve()
     this.lastSweepAt = 0
     this.lastScheduleAt = 0
@@ -277,13 +278,37 @@ export class AgentBot {
     return this.lifecycle.snapshot().running
   }
 
+  /** Запустить не больше настроенного числа обработчиков и дождаться полного простоя. */
+  scheduleWorkers(reason = 'worker') {
+    const limit = Math.max(1, Number(this.config.queue?.workers) || 1)
+    const hasPending = () => this.queue.length > 0 || Number(this.queueStore?.count?.() ?? 0) > 0
+    while (!this.stopping && hasPending() && this.workerRuns.size < limit) {
+      let run
+      run = this.drain()
+        .catch((error) => this.logger?.error(`${reason} failed`, { error }))
+        .finally(() => {
+          this.workerRuns.delete(run)
+          if (!this.stopping && hasPending()) this.scheduleWorkers(reason)
+        })
+      this.workerRuns.add(run)
+    }
+    this.worker = this.waitForWorkers()
+    return this.worker
+  }
+
+  async waitForWorkers() {
+    while (this.workerRuns.size > 0) {
+      await Promise.allSettled([...this.workerRuns])
+    }
+  }
+
   /** Принятые SQLite-результаты, не попавшие в доставку до падения. */
   async recoverAcceptedOutbox() {
     if (!this.queueStore || !this.delivery?.enqueue) return
     for (const row of this.queueStore.pendingOutbox()) {
       const payload = row.payload
       if (payload?.kind === 'personal') {
-        await this.safeSend(payload.chatId, payload.text, { replyToMessageId: payload.replyToMessageId })
+        await this.delivery.enqueue(payload, { channel: 'personal' })
         if (Array.isArray(payload.files) && payload.files.length > 0) {
           await this.sendOutputs({ job: { id: payload.taskId, chatId: payload.chatId }, outputs: { selected: payload.files, skipped: [] } })
         }
@@ -305,17 +330,20 @@ export class AgentBot {
       const created = await ensureInstructions(dir, this.instructionsPath)
       this.logger?.info('workspace ready', { dir, instructionsCreated: created })
     }
+    await this.journal?.load()
+    await this.journal?.compact()
+    await this.activity?.load?.()
     const removed = await pruneReservedDirs(dir, { retentionDays: this.config.workspace.retentionDays })
+    const activeIds = this.journal?.records
+      ? [...this.journal.records.values()].filter((record) => !TERMINAL.has(record.status)).map((record) => record.id)
+      : []
     const prunedTasks = await pruneTaskWorkspaces(dir, {
       retentionDays: this.config.workspace.retentionDays,
-      activeIds: this.journal?.records ? [...this.journal.records.keys()] : [],
+      activeIds,
     })
     if (prunedTasks > 0) this.logger?.info('task workspaces pruned', { removed: prunedTasks })
     if (removed > 0) this.logger?.info('old reserved files pruned', { removed })
 
-    await this.journal?.load()
-    await this.journal?.compact()
-    await this.activity?.load?.()
     // Принятые задачи и прерванные выполнения восстанавливаются до опроса Telegram:
     // владелец не должен видеть «пустой» агент, пока очередь ещё не поднята.
     await this.memory?.cleanupTasks?.(this.config.memory?.taskRetentionDays ?? 7)
@@ -354,9 +382,7 @@ export class AgentBot {
     void this.sweepAwaiting({ announce: true })
     void this.announceRecovery()
     if (this.queue.length > 0) {
-      this.worker = this.worker.then(() => this.drain()).catch((error) => {
-        this.logger?.error('recovery worker failed', { error })
-      })
+      this.scheduleWorkers('recovery worker')
     }
   }
 
@@ -388,6 +414,10 @@ export class AgentBot {
   recordToJob(record) {
     return {
       id: record.id,
+      kind: record.kind,
+      requestId: record.requestId,
+      revision: record.revision,
+      retry: record.retry,
       chatId: record.chatId,
       userId: record.userId,
       text: record.text ?? record.request ?? '',
@@ -478,8 +508,8 @@ export class AgentBot {
   async stop() {
     this.stopping = true
     this.pollController?.abort()
-    this.running?.controller?.abort()
-    await this.worker.catch(() => {})
+    this.lifecycle.cancelRunning()
+    await this.waitForWorkers()
     await this.platform.stop?.()
     this.delivery?.stop?.()
     await Promise.all([
@@ -1496,7 +1526,7 @@ export class AgentBot {
         budget,
         stopping: this.stopping,
         onStage: (stage) => {
-          if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
+          if (this.lifecycle.runningFor(job.id)) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage) => {
           this.recordActivity(job, { type: 'model_usage', agent: 'quick', tokens: usage?.totalTokens, unknown: usage?.totalTokens === undefined })
@@ -1540,6 +1570,12 @@ export class AgentBot {
         maxChars: this.config.delivery?.textChars ?? 3500,
       })
       : undefined
+    const personalText = job.route
+      ? undefined
+      : [
+          quick.text,
+          quickFooter({ tokens: quick.usage.totalTokens, usdText: formatUsd(cost.usd), taskId: job.id }),
+        ].join('\n')
     const personalOutbox = job.route
       ? undefined
       : {
@@ -1547,7 +1583,7 @@ export class AgentBot {
         kind: 'personal',
         taskId: job.id,
         chatId: job.chatId,
-        text: quickText,
+        text: personalText,
         replyToMessageId: this.jobReplyTo(job),
         files: [],
       }
@@ -1585,10 +1621,7 @@ export class AgentBot {
       return { quick: true, text: quickText }
     }
     await this.markStatus({ chatId: job.chatId, statusMessageId, markdown: quickStatus({ taskId: job.id }) })
-    await this.safeSend(job.chatId, [
-      quick.text,
-      quickFooter({ tokens: quick.usage.totalTokens, usdText: formatUsd(cost.usd), taskId: job.id }),
-    ].join('\n'), { replyToMessageId: this.jobReplyTo(job) })
+    await this.delivery?.enqueue(personalOutbox, { channel: 'personal' })
     leaseContext.markOutbox?.(personalOutbox.eventId)
     await this.mirrorResult(quick.text, job.id)
     return { quick: true, text: quick.text }
@@ -1680,9 +1713,7 @@ export class AgentBot {
         resumedAt: this.now().getTime(),
       },
     })
-    this.worker = this.worker.then(() => this.drain()).catch((error) => {
-      this.logger?.error('continue worker failed', { error })
-    })
+    this.scheduleWorkers('continue worker')
     return `▶️ Продолжаю задачу ${id} с сохранённого места.`
   }
 
@@ -2156,15 +2187,7 @@ export class AgentBot {
     if (this.running) {
       await this.safeSend(job.chatId, `📋 Принял, задача ${job.id} в очереди (позиция ${this.queue.length}).`)
     }
-    // With several queue workers a new task must start another drain loop right
-    // away; the SQLite lease prevents the same task from being claimed twice.
-    if ((this.config.queue?.workers ?? 1) > 1) {
-      this.worker = Promise.allSettled([this.worker, this.drain()]).then(() => {})
-    } else {
-      this.worker = this.worker.then(() => this.drain()).catch((error) => {
-        this.logger?.error('worker failed', { error })
-      })
-    }
+    this.scheduleWorkers('worker')
     return { queued: true, duplicate: false, taskId: job.id, position: this.queue.length }
   }
 
@@ -2365,7 +2388,7 @@ export class AgentBot {
     if (known?.record) return known.record.response ?? { taskId: id, state: record.status }
     let state = record.status
     if (!TERMINAL.has(record.status)) {
-      if (this.running?.id === id) {
+      if (this.lifecycle.runningFor(id)) {
         this.lifecycle.cancelRunning(id)
         state = STATUS.cancelled
       } else if (record.status === STATUS.queued) {
@@ -2503,8 +2526,18 @@ export class AgentBot {
       if (job.chatId !== undefined) await this.safeSend(job.chatId, `✅ Заявка ${job.requestId}: реализация опубликована (${(result?.results ?? []).map((item) => item.branch).join(', ')})`)
     } catch (error) {
       this.logger?.warn?.('implementation job failed', { taskId: job.id, requestId: job.requestId, error: String(error?.message ?? error) })
-      await this.failTask(job.id, { reason: 'implement', error: String(error?.message ?? error).slice(0, 300) })
-      if (job.chatId !== undefined) await this.safeSend(job.chatId, `❌ Заявка ${job.requestId}: реализация не удалась — ${String(error?.message ?? error).slice(0, 300)}`)
+      const cancelled = controller.signal.aborted || error?.name === 'AbortError'
+      await this.failTask(job.id, {
+        status: cancelled ? STATUS.cancelled : STATUS.failed,
+        reason: cancelled ? 'cancelled' : 'implement',
+        error: String(error?.message ?? error).slice(0, 300),
+      })
+      if (job.chatId !== undefined) {
+        const text = cancelled
+          ? `⛔ Заявка ${job.requestId}: реализация отменена.`
+          : `❌ Заявка ${job.requestId}: реализация не удалась — ${String(error?.message ?? error).slice(0, 300)}`
+        await this.safeSend(job.chatId, text)
+      }
     }
   }
 
@@ -2787,7 +2820,7 @@ export class AgentBot {
         budget: attemptBudget,
         stopping: this.stopping,
         onStage: (stage) => {
-          if (this.running?.id === job.id) this.lifecycle.updateRunning({ stage }, job.id)
+          if (this.lifecycle.runningFor(job.id)) this.lifecycle.updateRunning({ stage }, job.id)
         },
         onUsage: (usage, info) => {
           this.recordActivity(job, { type: 'model_usage', agent: 'dsh', role: info?.executorId ?? job.agentRole ?? 'dsh', provider: 'deepseek', model: this.config.agentProfiles?.[info?.executorId]?.model ?? this.config.model?.name, stage: info?.stage, tokens: usage?.totalTokens, unknown: Boolean(info?.unknown || usage?.totalTokens === undefined) })
@@ -2802,8 +2835,9 @@ export class AgentBot {
               timeZone,
             })
           }
-          if (this.running?.id === job.id) {
-            this.lifecycle.updateRunning({ steps: spent.steps, stage: info?.stage ?? this.running.stage }, job.id)
+          const running = this.lifecycle.runningFor(job.id)
+          if (running) {
+            this.lifecycle.updateRunning({ steps: spent.steps, stage: info?.stage ?? running.stage }, job.id)
           }
         },
         verify: async ({ result: runResult, signal, budget }) => {
@@ -3211,8 +3245,8 @@ export class AgentBot {
     }
     const safeText = redactSecrets(text)
     if (safeText !== text) this.logger?.warn('secret redacted from report', { taskId: job.id })
-    // Личный путь тоже фиксирует принятие до отправки; outbox для него пока не
-    // создаётся отдельно — доставка идёт напрямую, ограничение зафиксировано.
+    // Личный путь тоже фиксирует принятие и outbox до отправки. DeliveryWorker
+    // подтверждает событие только после успешного ответа платформы.
     const personalOutbox = {
       eventId: `personal:${job.id}:${job.resultVersion ?? 1}`,
       kind: 'personal',
@@ -3233,10 +3267,7 @@ export class AgentBot {
       statusMessageId,
       markdown: statusMarkdown({ result, taskId: job.id, limits: this.config.limits }),
     })
-    const sent = await this.safeSend(job.chatId, safeText, {
-      replyToMessageId: this.jobReplyTo(job),
-    })
-    await this.delivery?.trackPersonal?.({ taskId: job.id, text, chatId: job.chatId, receipt: sent?.messageId })
+    await this.delivery?.enqueue(personalOutbox, { channel: 'personal' })
     leaseContext.markOutbox?.(personalOutbox.eventId)
     await this.mirrorResult(text, job.id)
   }

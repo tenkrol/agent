@@ -140,7 +140,11 @@ export class DeliveryWorker {
   async #attemptPersonal(record, action) {
     await this.store.sending(record.eventId)
     const text = String(record.payload?.text ?? '')
-    const sent = await this.platform.sendText({ chatId: record.payload?.chatId, markdown: text })
+    const sent = await this.platform.sendText({
+      chatId: record.payload?.chatId,
+      markdown: text,
+      replyToMessageId: record.payload?.replyToMessageId,
+    })
     const updated = await this.store.settle(record.eventId, {
       state: 'acked',
       outcome: 'acked',

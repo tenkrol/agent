@@ -147,6 +147,27 @@ test('personal delivery is tracked separately and acked by message id', async ()
     assert.equal(record.state, DELIVERY.acked)
     assert.equal(platform.sent.length, 1)
     assert.equal(platform.sent[0].markdown, 'личное сообщение')
+    assert.equal(platform.sent[0].replyToMessageId, undefined)
+  } finally {
+    await cleanup(dir)
+  }
+})
+
+test('personal delivery preserves the message being replied to', async () => {
+  const dir = await tempDir()
+  try {
+    const store = await new DeliveryStore({ file: path.join(dir, 'deliveries.jsonl'), logger: createTestLogger() }).load()
+    const platform = createStubPlatform()
+    const worker = new DeliveryWorker({ store, platform, logger: createTestLogger() })
+    await worker.enqueue({
+      eventId: 't2:personal:1',
+      taskId: 't2',
+      type: 'result',
+      chatId: 42,
+      text: 'ответ мосту',
+      replyToMessageId: 91,
+    }, { channel: 'personal' })
+    assert.equal(platform.sent[0].replyToMessageId, 91)
   } finally {
     await cleanup(dir)
   }
