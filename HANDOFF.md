@@ -1366,8 +1366,6 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
 - Проверки: `bash tools/spec-check.sh`; полный набор — 545 pass, 0 fail. Старые
   воспроизводящие утверждения теперь дают 0/7, что подтверждает устранение всех семи
   исходных проявлений.
-- Локальный коммит создан в ветке `fix/PLA-52-reliability-audit`. Push недоступен:
-  GitHub запросил HTTPS-учётные данные (`could not read Username for 'https://github.com'`).
-  После авторизации ветку можно отправить командой
-  `git push -u origin fix/PLA-52-reliability-audit`.
+- Изменения отправлены в `origin/fix/PLA-52-reliability-audit` через отдельный SSH
+  deploy key репозитория; ветка отслеживает соответствующую ветку в origin.
 - Deploy и live-проверки не выполнялись.
