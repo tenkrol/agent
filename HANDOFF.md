@@ -1389,3 +1389,15 @@ Production: агент `release-20261018-085724` (SQLite, workers=2, per-task wo
   2, Telegram getMe 3/3, два последовательных запуска `agent-run-watch` — success с
   продвижением маркера; failed-unit отсутствуют.
 - Ветка: `fix/PLA-53-server-health`.
+
+## 2026-10-23: PLA-54 — principal отделён от маршрута доставки
+
+- Контракт v2 принимает проверенный `principal.userId/scopeId`; старый клиент без
+  principal остаётся совместимым и получает владельца из проверенного route.
+- Владелец и область сохраняются в job/journal, возвращаются в состоянии задачи и
+  используются activity, usage и персональными лимитами.
+- Регрессии покрывают второго пользователя, независимый alert chat и старый клиент.
+  Полный локальный прогон: 548/548, `spec-check` зелёный.
+- Production на Финляндии: `release-20261022-220405`, `dsh-agent` active,
+  `NRestarts=0`, `/v1/health` — HTTP 200 и contract 2; ошибок после запуска нет.
+- Коммит реализации: `e780af4`, отправлен в `origin/main`.
