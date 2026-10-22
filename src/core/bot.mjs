@@ -486,7 +486,7 @@ export class AgentBot {
    *
    * `userId` и `scopeId` берутся из самой задачи (`job`), а не из текста или
    * аргументов модели: по ним бот-ассистент решает, кому показывать поручение.
-   * Для задачи из моста это чат владельца, для задачи из Telegram — автор
+   * Для задачи из моста это principal контракта, для задачи из Telegram — автор
    * обновления, уже прошедший allow-list.
    *
    * @param {object} job - задача очереди.
@@ -2243,6 +2243,8 @@ export class AgentBot {
   async submitV2Task(request = {}) {
     const chatId = this.alertChatId()
     if (chatId === undefined) throw new Error('не настроен чат владельца для результата')
+    const userId = request.principal?.userId ?? request.route?.chatId ?? chatId
+    const scopeId = request.principal?.scopeId ?? request.route?.chatId ?? chatId
     const id = this.journal ? this.journal.nextId(this.now()) : `v2-${this.now().getTime().toString(36)}`
     let revision
     if (request.revisionOf) {
@@ -2264,7 +2266,8 @@ export class AgentBot {
     const outcome = await this.enqueueJob({
       id,
       chatId,
-      userId: chatId,
+      userId,
+      scopeId,
       text: request.task,
       attachments,
       brief: `🔗 ${String(request.task ?? '').slice(0, 280)}`,
@@ -2312,6 +2315,8 @@ export class AgentBot {
       : null
     return {
       id: record.id,
+      userId: record.userId,
+      scopeId: record.scopeId ?? record.chatId,
       execution: record.status,
       delivery,
       question,

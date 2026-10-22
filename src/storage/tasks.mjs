@@ -102,6 +102,7 @@ const JOB_FIELDS = [
   'retry',
   'chatId',
   'userId',
+  'scopeId',
   'text',
   'attachments',
   'replyToMessageId',

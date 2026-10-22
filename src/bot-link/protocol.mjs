@@ -48,6 +48,17 @@ export function parseRoute(route, { routeConfig = {} } = {}) {
   }
 }
 
+/** Проверить владельца и область задачи отдельно от маршрута доставки. */
+export function parsePrincipal(principal) {
+  if (principal === undefined || principal === null) return undefined
+  if (!isObject(principal)) throw new ProtocolError(400, 'principal должен быть объектом')
+  const userId = text(principal.userId, 100, 'principal.userId')
+  const rawScope = principal.scopeId === undefined || principal.scopeId === null
+    ? `personal-${userId}`
+    : text(principal.scopeId, 200, 'principal.scopeId')
+  return { userId, scopeId: rawScope }
+}
+
 /** Проверить `context.facts`: массив объектов, а не строк. */
 export function parseFacts(facts) {
   if (facts === undefined || facts === null) return []
@@ -104,6 +115,7 @@ export function parseTaskRequest(payload, { maxTaskChars = 4000, routeConfig = {
     source: String(payload.source ?? 'assistant').slice(0, 40),
     revisionOf: payload.revisionOf === undefined || payload.revisionOf === null ? undefined : String(payload.revisionOf).trim(),
     route: parseRoute(payload.route, { routeConfig }),
+    principal: parsePrincipal(payload.principal),
     attachments: parseAttachments(payload.attachments, { fileExists }),
     facts: parseFacts(payload.context?.facts),
   }

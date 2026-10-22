@@ -58,6 +58,58 @@ test('a routed task delivers its result as one event and does not write to the p
   }
 })
 
+test('a routed task keeps the caller principal separate from the alert chat', async () => {
+  const outbox = outboxRecorder()
+  const env = await createBotHarness({
+    configEnv: {
+      ALLOWED_USER_IDS: '101,202',
+      ALERT_CHAT_ID: '101',
+      BRIDGE_ROUTE_BOT_ID: '999',
+      BRIDGE_ROUTE_CHAT_ID: '202',
+    },
+    deliveryFetch: outbox.fetchImpl,
+  })
+  try {
+    const { taskId } = await env.bot.submitV2Task({
+      task: 'личная задача второго пользователя',
+      requestId: 'req-owner-202',
+      route: { ...ROUTE, chatId: '202' },
+      principal: { userId: '202', scopeId: 'personal-202' },
+    })
+    await env.bot.worker
+    const record = env.journal.get(taskId)
+    assert.equal(record.userId, '202')
+    assert.equal(record.scopeId, 'personal-202')
+    assert.equal(env.bot.taskState(taskId).userId, '202')
+    const activity = env.bot.activity.recent(50).filter((event) => event.taskId === taskId)
+    assert.ok(activity.length > 0)
+    assert.ok(activity.every((event) => String(event.userId) === '202'))
+    assert.ok(activity.every((event) => event.scopeId === 'personal-202'))
+    assert.equal(env.usage.byUser().find((item) => item.userId === '202')?.requests, 1)
+  } finally {
+    await env.close()
+  }
+})
+
+test('an old v2 client without principal derives the owner from its trusted route', async () => {
+  const outbox = outboxRecorder()
+  const env = await createBotHarness({
+    configEnv: { ALLOWED_USER_IDS: '101,202', ALERT_CHAT_ID: '101', BRIDGE_ROUTE_BOT_ID: '999', BRIDGE_ROUTE_CHAT_ID: '202' },
+    deliveryFetch: outbox.fetchImpl,
+  })
+  try {
+    const { taskId } = await env.bot.submitV2Task({
+      task: 'задача старого клиента',
+      requestId: 'req-old-client',
+      route: { ...ROUTE, chatId: '202' },
+    })
+    await env.bot.worker
+    assert.equal(env.journal.get(taskId).userId, '202')
+  } finally {
+    await env.close()
+  }
+})
+
 test('a question goes to the original conversation and the reply continues the same task', async () => {
   const outbox = outboxRecorder()
   let calls = 0

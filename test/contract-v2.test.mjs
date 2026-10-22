@@ -84,6 +84,7 @@ test('a v2 task with a route, facts and file refs is accepted', async () => {
       method: 'POST',
       headers: { ...AUTH, 'content-type': 'application/json' },
       body: taskBody({
+        principal: { userId: '42', scopeId: 'personal-42' },
         attachments: [{ fileId: record.fileId, kind: 'document', name: 'план.docx' }],
         context: { facts: [{ text: 'часовой пояс — Москва', subject: 'timezone' }] },
       }),
@@ -92,6 +93,7 @@ test('a v2 task with a route, facts and file refs is accepted', async () => {
     assert.deepEqual(await response.json(), { ok: true, contract: 2, taskId: 'task-1', state: 'queued', duplicate: false })
     assert.equal(seen.tasks.length, 1)
     assert.equal(seen.tasks[0].route.chatId, '42')
+    assert.deepEqual(seen.tasks[0].principal, { userId: '42', scopeId: 'personal-42' })
     assert.equal(seen.tasks[0].attachments[0].fileId, record.fileId)
     assert.equal(seen.tasks[0].facts[0].subject, 'timezone')
   } finally {
@@ -100,7 +102,7 @@ test('a v2 task with a route, facts and file refs is accepted', async () => {
   }
 })
 
-test('missing requestId, bad route and unknown fileId are rejected', async () => {
+test('missing requestId, bad route, bad principal and unknown fileId are rejected', async () => {
   const dir = await tempDir()
   const files = await new FileStore({ dir: path.join(dir, 'files'), file: path.join(dir, 'files.jsonl') }).load()
   const { server, seen, url } = await startServer({ files })
@@ -108,6 +110,7 @@ test('missing requestId, bad route and unknown fileId are rejected', async () =>
   try {
     assert.equal((await post(JSON.stringify({ contract: 2, task: 'без ключа' }))).status, 400)
     assert.equal((await post(taskBody({ route: { platform: 'telegram', botId: '1', chatId: '2' } }))).status, 400)
+    assert.equal((await post(taskBody({ principal: { userId: '' } }))).status, 400)
     assert.equal((await post(taskBody({ attachments: [{ fileId: 'f_unknown' }] }))).status, 400)
     assert.equal(seen.tasks.length, 0)
   } finally {
