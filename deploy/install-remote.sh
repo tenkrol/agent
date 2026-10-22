@@ -162,6 +162,14 @@ grep -q '^MODEL_API_KEY=' "$ENV_FILE" || printf 'ВНИМАНИЕ: в %s нет 
 
 log "5/7 unit systemd"
 install -m 0644 "$RELEASE_DIR/deploy/$SERVICE_NAME.service" "/etc/systemd/system/$SERVICE_NAME.service"
+# setup-outbox.sh включает сторож отдельно. Если интеграция уже установлена,
+# обычный деплой должен атомарно обновить её скрипт из текущего релиза.
+if [ -f /etc/systemd/system/agent-run-watch.service ]; then
+  WATCH_TARGET=/usr/local/bin/agent-run-watch
+  install -m 0755 "$RELEASE_DIR/deploy/agent-run-watch" "${WATCH_TARGET}.new"
+  mv "${WATCH_TARGET}.new" "$WATCH_TARGET"
+  printf 'Обновлён %s\n' "$WATCH_TARGET"
+fi
 # The unit ships a placeholder so the file stays readable as documentation.
 sed -i "s|^ExecStart=__NODE_BIN__ |ExecStart=$NODE_BIN |" "/etc/systemd/system/$SERVICE_NAME.service"
 sed -i "s|^Environment=DSH_BIN=.*|Environment=DSH_BIN=$DSH_BIN|" "/etc/systemd/system/$SERVICE_NAME.service"

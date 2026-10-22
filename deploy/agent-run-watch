@@ -9,10 +9,11 @@
 #   • от бота самого агента (@Tenkrol_ag_bot) — владелец ждёт ответ именно от него.
 # Отметка времени и flock не дают отчитаться дважды об одной задаче.
 set -euo pipefail
-exec 9>/var/lib/agent/run-watch.lock
+STATE_ROOT=${STATE_ROOT:-/var/lib/agent}
+exec 9>"$STATE_ROOT/run-watch.lock"
 flock -n 9 || exit 0
 
-MARK=/var/lib/agent/run-watch.marker
+MARK="$STATE_ROOT/run-watch.marker"
 [ -f "$MARK" ] || { date +%s > "$MARK"; echo "agent-run-watch: поставлена отметка, начну со следующей задачи"; exit 0; }
 SINCE=$(cat "$MARK")
 NOW=$(date +%s)
@@ -28,9 +29,7 @@ send_from_agent_bot() {
     --data-urlencode "chat_id=$owner" --data-urlencode "text=$text" >/dev/null 2>&1 || true
 }
 
-journalctl -u dsh-agent --since "@$SINCE" --no-pager -o cat 2>/dev/null \
-  | grep -F "dsh run finished" \
-  | while IFS= read -r line; do
+while IFS= read -r line; do
       ok=$(printf "%s" "$line" | grep -oE "\"ok\":(true|false)" | head -1 | cut -d: -f2)
       steps=$(printf "%s" "$line" | grep -oE "\"steps\":[0-9]+" | head -1 | cut -d: -f2)
       tokens=$(printf "%s" "$line" | grep -oE "\"totalTokens\":[0-9]+" | head -1 | cut -d: -f2)
@@ -39,6 +38,9 @@ journalctl -u dsh-agent --since "@$SINCE" --no-pager -o cat 2>/dev/null \
       agent-notify --title "Отчёт агента" "$text" >/dev/null 2>&1 \
         || echo "agent-run-watch: отчёт в чат ассистента не ушёл" >&2
       send_from_agent_bot "$text"
-    done
+    done < <(
+      journalctl -u dsh-agent --since "@$SINCE" --no-pager -o cat 2>/dev/null \
+        | grep -F "dsh run finished" || true
+    )
 
 echo "$NOW" > "$MARK"
