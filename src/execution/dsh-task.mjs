@@ -394,6 +394,8 @@ export class DshTaskRunner {
       timedOut: result.timedOut,
       aborted: result.aborted,
       budgetExceeded: result.budgetExceeded,
+          // Причина падения: dsh пишет её в stderr, без этого лога сбой необъясним.
+          stderr: (result.stderr || '').slice(-400),
     })
     return result
   }
